@@ -82,7 +82,7 @@ export default function ScreenplayNew() {
           />
 
           <div className="space-y-4">
-            <FormLabel className="text-xl font-bold font-serif uppercase">Source Text</FormLabel>
+            <div className="text-xl font-bold font-serif uppercase">Source Text</div>
             <FileUploader 
               onExtracted={(text) => {
                 const current = form.getValues("sourceText");
