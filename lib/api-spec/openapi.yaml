@@ -1,0 +1,411 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: Graphic Novel Generator API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: models
+    description: Available AI models
+  - name: novels
+    description: Graphic novel generation
+  - name: screenplays
+    description: Screenplay generation
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /models:
+    get:
+      operationId: listModels
+      tags: [models]
+      summary: List available text models (Zhi 1-4)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ModelInfo"
+
+  /novels:
+    get:
+      operationId: listNovels
+      tags: [novels]
+      summary: List recent graphic novels
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NovelSummary"
+    post:
+      operationId: createNovel
+      tags: [novels]
+      summary: Start generating a graphic novel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NovelInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Novel"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /novels/{id}:
+    get:
+      operationId: getNovel
+      tags: [novels]
+      summary: Get a novel with its panels and progress
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Novel"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: deleteNovel
+      tags: [novels]
+      summary: Delete a novel
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /screenplays:
+    get:
+      operationId: listScreenplays
+      tags: [screenplays]
+      summary: List recent screenplays
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScreenplaySummary"
+    post:
+      operationId: createScreenplay
+      tags: [screenplays]
+      summary: Convert source text into a graphic-novel screenplay
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScreenplayInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Screenplay"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /screenplays/{id}:
+    get:
+      operationId: getScreenplay
+      tags: [screenplays]
+      summary: Get a screenplay
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Screenplay"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: deleteScreenplay
+      tags: [screenplays]
+      summary: Delete a screenplay
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    ModelInfo:
+      type: object
+      required: [id, label, provider, supportsExplicit]
+      properties:
+        id:
+          type: string
+          description: One of zhi1, zhi2, zhi3, zhi4
+        label:
+          type: string
+          description: Display label (e.g. "Zhi 1")
+        provider:
+          type: string
+          description: Underlying provider name
+        supportsExplicit:
+          type: boolean
+          description: Whether this model is safe for explicit/X-rated text
+
+    ExtractedText:
+      type: object
+      required: [text, filename]
+      properties:
+        text:
+          type: string
+        filename:
+          type: string
+        characters:
+          type: integer
+
+    ReferenceImage:
+      type: object
+      required: [label, dataUrl]
+      properties:
+        label:
+          type: string
+          description: e.g. "the man" or "Sarah"
+        dataUrl:
+          type: string
+          description: data:image/...;base64 encoded reference image
+
+    NovelInput:
+      type: object
+      required: [sourceText, panelCount, textModel, specifications]
+      properties:
+        title:
+          type: string
+        sourceText:
+          type: string
+          minLength: 1
+        panelCount:
+          type: integer
+          minimum: 1
+          maximum: 50
+        specifications:
+          type: string
+          description: User's free-form direction (style, characters, tone)
+        textModel:
+          type: string
+          description: zhi1 | zhi2 | zhi3 | zhi4
+        explicit:
+          type: boolean
+          description: Force the X-rated path through Venice for text
+        artStyle:
+          type: string
+          description: e.g. "noir comic", "manga", "watercolor"
+        referenceImages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReferenceImage"
+
+    NovelSummary:
+      type: object
+      required: [id, title, status, panelCount, completedPanels, createdAt]
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        status:
+          type: string
+          description: pending | generating | done | failed
+        panelCount:
+          type: integer
+        completedPanels:
+          type: integer
+        createdAt:
+          type: string
+        coverImage:
+          type: ["string", "null"]
+        textModel:
+          type: string
+        artStyle:
+          type: ["string", "null"]
+
+    Panel:
+      type: object
+      required: [id, idx, status]
+      properties:
+        id:
+          type: integer
+        idx:
+          type: integer
+        caption:
+          type: ["string", "null"]
+        imagePrompt:
+          type: ["string", "null"]
+        imageDataUrl:
+          type: ["string", "null"]
+        status:
+          type: string
+          description: pending | generating | done | failed
+        error:
+          type: ["string", "null"]
+
+    Novel:
+      type: object
+      required:
+        [id, title, sourceText, specifications, panelCount, textModel, status, panels, createdAt]
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        sourceText:
+          type: string
+        specifications:
+          type: string
+        panelCount:
+          type: integer
+        textModel:
+          type: string
+        artStyle:
+          type: ["string", "null"]
+        explicit:
+          type: boolean
+        status:
+          type: string
+        error:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        panels:
+          type: array
+          items:
+            $ref: "#/components/schemas/Panel"
+
+    ScreenplayInput:
+      type: object
+      required: [sourceText, specifications, textModel]
+      properties:
+        title:
+          type: string
+        sourceText:
+          type: string
+          minLength: 1
+        specifications:
+          type: string
+          description: How to handle the conversion (non-fiction expository, framed in a story, etc.)
+        textModel:
+          type: string
+          description: zhi1 | zhi2 | zhi3 | zhi4
+        explicit:
+          type: boolean
+
+    ScreenplaySummary:
+      type: object
+      required: [id, title, textModel, createdAt]
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        textModel:
+          type: string
+        createdAt:
+          type: string
+
+    Screenplay:
+      type: object
+      required: [id, title, sourceText, specifications, textModel, content, createdAt]
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        sourceText:
+          type: string
+        specifications:
+          type: string
+        textModel:
+          type: string
+        explicit:
+          type: boolean
+        content:
+          type: string
+        createdAt:
+          type: string

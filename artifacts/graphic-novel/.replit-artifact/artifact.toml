@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Graphic Novel Generator"
+version = "1.0.0"
+id = "artifacts/graphic-novel"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 26240
+
+[services.development]
+run = "pnpm --filter @workspace/graphic-novel run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/graphic-novel", "run", "build" ]
+publicDir = "artifacts/graphic-novel/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "26240"
+BASE_PATH = "/"

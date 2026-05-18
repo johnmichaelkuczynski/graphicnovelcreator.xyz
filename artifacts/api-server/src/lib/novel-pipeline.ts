@@ -1,0 +1,174 @@
+import { eq, asc } from "drizzle-orm";
+import { db, novelsTable, panelsTable } from "@workspace/db";
+import { generateText, generateImage, type ZhiId } from "./ai";
+import { logger } from "./logger";
+
+interface PanelPlan {
+  caption: string;
+  imagePrompt: string;
+}
+
+function extractJson(text: string): unknown {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const candidate = (fenced ? fenced[1] : text).trim();
+  // Try direct parse first
+  try {
+    return JSON.parse(candidate);
+  } catch {}
+  // Fallback: locate the first { ... } or [ ... ] block
+  const start = candidate.search(/[[{]/);
+  if (start === -1) throw new Error("No JSON found in model output");
+  const open = candidate[start];
+  const close = open === "[" ? "]" : "}";
+  let depth = 0;
+  for (let i = start; i < candidate.length; i++) {
+    if (candidate[i] === open) depth++;
+    else if (candidate[i] === close) {
+      depth--;
+      if (depth === 0) {
+        return JSON.parse(candidate.slice(start, i + 1));
+      }
+    }
+  }
+  throw new Error("Malformed JSON in model output");
+}
+
+async function planPanels(opts: {
+  sourceText: string;
+  specifications: string;
+  artStyle?: string | null;
+  panelCount: number;
+  textModel: ZhiId;
+  explicit: boolean;
+  referenceLabels: string[];
+}): Promise<PanelPlan[]> {
+  const referenceNote = opts.referenceLabels.length
+    ? `\n\nThe author has supplied reference characters/subjects you must depict consistently: ${opts.referenceLabels.join(", ")}. Refer to them by these labels in every image prompt that includes them.`
+    : "";
+
+  const system = `You are a senior graphic novel storyboard editor. You translate prose into a panel-by-panel comic script. You return ONLY JSON.
+
+Rules:
+- Output a JSON array of exactly ${opts.panelCount} objects.
+- Each object has two fields: "caption" (the text that appears ABOVE the panel image, like a narration box — never dialogue inside the panel, never bubbles), and "imagePrompt" (a vivid visual description of what the artist should draw).
+- The caption should be evocative narration, 1-3 sentences max. No speaker tags. No "Panel 1:" prefixes.
+- The imagePrompt should be a self-contained description of the scene: subject, action, environment, mood, lighting, framing. Do NOT request text or speech bubbles inside the image.
+- Maintain visual continuity: recurring characters should be described with the same identifying features each time.${referenceNote}
+- The art style for every panel is: ${opts.artStyle?.trim() || "ink-and-wash graphic novel"}.
+- Honor the author's direction: ${opts.specifications || "(none)"}.`;
+
+  const user = `SOURCE TEXT:\n${opts.sourceText}\n\nReturn the JSON array now.`;
+
+  const raw = await generateText({
+    model: opts.textModel,
+    explicit: opts.explicit,
+    system,
+    user,
+  });
+
+  const parsed = extractJson(raw);
+  if (!Array.isArray(parsed)) throw new Error("Panel plan was not an array");
+  const plans: PanelPlan[] = parsed.slice(0, opts.panelCount).map((p, i) => {
+    const obj = p as { caption?: unknown; imagePrompt?: unknown };
+    const caption = typeof obj.caption === "string" ? obj.caption : "";
+    const imagePrompt = typeof obj.imagePrompt === "string" ? obj.imagePrompt : "";
+    if (!imagePrompt) throw new Error(`Panel ${i + 1} missing imagePrompt`);
+    return { caption, imagePrompt };
+  });
+  while (plans.length < opts.panelCount) {
+    plans.push({ caption: "", imagePrompt: plans[plans.length - 1]?.imagePrompt ?? "continuation" });
+  }
+  return plans;
+}
+
+export async function runNovelGeneration(novelId: number): Promise<void> {
+  const [novel] = await db.select().from(novelsTable).where(eq(novelsTable.id, novelId));
+  if (!novel) {
+    logger.error({ novelId }, "Novel not found for generation");
+    return;
+  }
+
+  try {
+    await db.update(novelsTable).set({ status: "generating" }).where(eq(novelsTable.id, novelId));
+
+    const plans = await planPanels({
+      sourceText: novel.sourceText,
+      specifications: novel.specifications,
+      artStyle: novel.artStyle,
+      panelCount: novel.panelCount,
+      textModel: novel.textModel as ZhiId,
+      explicit: novel.explicit,
+      referenceLabels: (novel.referenceImages ?? []).map((r) => r.label),
+    });
+
+    // Insert plan rows up front so the client can show progress.
+    const inserted = await db
+      .insert(panelsTable)
+      .values(
+        plans.map((p, idx) => ({
+          novelId,
+          idx,
+          caption: p.caption,
+          imagePrompt: p.imagePrompt,
+          status: "pending",
+        })),
+      )
+      .returning({ id: panelsTable.id, idx: panelsTable.idx });
+
+    const styleSuffix = novel.artStyle?.trim()
+      ? `, ${novel.artStyle.trim()} style`
+      : ", ink-and-wash graphic novel style";
+
+    for (const row of inserted.sort((a, b) => a.idx - b.idx)) {
+      const plan = plans[row.idx];
+      await db
+        .update(panelsTable)
+        .set({ status: "generating" })
+        .where(eq(panelsTable.id, row.id));
+      try {
+        const dataUrl = await generateImage({
+          prompt: `${plan.imagePrompt}${styleSuffix}. No text, no captions, no speech bubbles in the image.`,
+        });
+        await db
+          .update(panelsTable)
+          .set({ status: "done", imageDataUrl: dataUrl })
+          .where(eq(panelsTable.id, row.id));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error({ novelId, panelIdx: row.idx, err: msg }, "Panel failed");
+        await db
+          .update(panelsTable)
+          .set({ status: "failed", error: msg })
+          .where(eq(panelsTable.id, row.id));
+      }
+    }
+
+    const finalPanels = await db
+      .select({ status: panelsTable.status })
+      .from(panelsTable)
+      .where(eq(panelsTable.novelId, novelId))
+      .orderBy(asc(panelsTable.idx));
+    const anyFailed = finalPanels.some((p) => p.status === "failed");
+    const allSettled = finalPanels.every((p) => p.status === "done" || p.status === "failed");
+    await db
+      .update(novelsTable)
+      .set({
+        status: allSettled ? (anyFailed ? "failed" : "done") : "generating",
+        ...(anyFailed && allSettled ? { error: "One or more panels failed to generate" } : {}),
+      })
+      .where(eq(novelsTable.id, novelId));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ novelId, err: msg }, "Novel generation failed");
+    await db
+      .update(novelsTable)
+      .set({ status: "failed", error: msg })
+      .where(eq(novelsTable.id, novelId));
+  }
+}
+
+export function startNovelGeneration(novelId: number): void {
+  runNovelGeneration(novelId).catch((err) => {
+    logger.error({ novelId, err }, "Background novel generation crashed");
+  });
+}
