@@ -45,7 +45,7 @@ export default function NovelNew() {
       specifications: "",
       artStyle: "",
       panelCount: 12,
-      textModel: "",
+      textModel: "zhi4",
       explicit: false,
     },
   });

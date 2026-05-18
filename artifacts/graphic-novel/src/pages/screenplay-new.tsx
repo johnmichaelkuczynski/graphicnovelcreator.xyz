@@ -36,7 +36,7 @@ export default function ScreenplayNew() {
       title: "",
       sourceText: "",
       specifications: "",
-      textModel: "",
+      textModel: "zhi4",
       explicit: false,
     },
   });
