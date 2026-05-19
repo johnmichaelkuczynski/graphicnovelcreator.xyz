@@ -17,6 +17,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { ReferenceImagesUploader, ReferenceImage } from "@/components/reference-images-uploader";
+import { ArtStylePicker } from "@/components/art-style-picker";
 
 const formSchema = z.object({
   title: z.string().optional(),
@@ -144,9 +145,10 @@ export default function ImageNovelNew() {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel className="font-bold uppercase">Art Direction</FormLabel>
-                  <FormDescription className="font-mono text-xs">Style, medium, color palette.</FormDescription>
+                  <FormDescription className="font-mono text-xs">Pick a style or write your own.</FormDescription>
+                  <ArtStylePicker value={field.value} onChange={field.onChange} />
                   <FormControl>
-                    <Textarea placeholder="e.g. Exactly like the reference image, high contrast neon..." className="h-32" {...field} />
+                    <Textarea placeholder="e.g. Exactly like the reference image, high contrast neon..." className="h-32 mt-2" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

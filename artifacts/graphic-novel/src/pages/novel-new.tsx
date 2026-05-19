@@ -18,6 +18,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 import { FileUploader } from "@/components/file-uploader";
 import { ReferenceImagesUploader, ReferenceImage } from "@/components/reference-images-uploader";
+import { ArtStylePicker } from "@/components/art-style-picker";
 
 const formSchema = z.object({
   title: z.string().optional(),
@@ -141,9 +142,10 @@ export default function NovelNew() {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel className="font-bold uppercase">Art Direction</FormLabel>
-                  <FormDescription className="font-mono text-xs">Visual style, medium, color palette.</FormDescription>
+                  <FormDescription className="font-mono text-xs">Pick a style or write your own.</FormDescription>
+                  <ArtStylePicker value={field.value} onChange={field.onChange} />
                   <FormControl>
-                    <Textarea placeholder="e.g. High contrast black and white ink, Frank Miller style..." className="h-32" {...field} />
+                    <Textarea placeholder="e.g. High contrast black and white ink, Frank Miller style..." className="h-32 mt-2" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
