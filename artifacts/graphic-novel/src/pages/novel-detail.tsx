@@ -1,14 +1,18 @@
 import { useLocation, useParams } from "wouter";
 import { useGetNovel, getGetNovelQueryKey } from "@workspace/api-client-react";
-import { ArrowLeft, Download, Printer, Loader2, AlertCircle } from "lucide-react";
+import { ArrowLeft, Download, Printer, Loader2, AlertCircle, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { format } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
+import { useState } from "react";
+import { exportNovelVideo } from "@/lib/video-export";
 
 export default function NovelDetail() {
   const { id } = useParams();
   const [, setLocation] = useLocation();
+  const [exportingVideo, setExportingVideo] = useState(false);
+  const [videoProgress, setVideoProgress] = useState(0);
 
   const { data: novel, isLoading, error } = useGetNovel(Number(id), {
     query: {
@@ -23,6 +27,28 @@ export default function NovelDetail() {
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleExportVideo = async () => {
+    if (!novel) return;
+    setExportingVideo(true);
+    setVideoProgress(0);
+    try {
+      await exportNovelVideo({
+        title: novel.title || "Untitled Issue",
+        panels: novel.panels
+          .filter((p) => p.status === "done" && p.imageDataUrl)
+          .map((p) => ({ caption: p.caption || "", imageDataUrl: p.imageDataUrl! })),
+        secondsPerPanel: 3,
+        onProgress: (p) => setVideoProgress(p),
+      });
+    } catch (err) {
+      console.error("Video export failed", err);
+      alert("Video export failed: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setExportingVideo(false);
+      setVideoProgress(0);
+    }
   };
 
   if (isLoading) {
@@ -53,9 +79,18 @@ export default function NovelDetail() {
         <Button variant="ghost" className="font-mono uppercase tracking-wider" onClick={() => setLocation("/")}>
           <ArrowLeft className="w-4 h-4 mr-2" /> Library
         </Button>
-        <Button onClick={handlePrint} disabled={isGenerating} className="font-bold uppercase tracking-widest">
-          <Printer className="w-4 h-4 mr-2" /> Export PDF
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={handlePrint} disabled={isGenerating || exportingVideo} variant="outline" className="font-bold uppercase tracking-widest">
+            <Printer className="w-4 h-4 mr-2" /> Export PDF
+          </Button>
+          <Button onClick={handleExportVideo} disabled={isGenerating || exportingVideo} className="font-bold uppercase tracking-widest">
+            {exportingVideo ? (
+              <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> {Math.round(videoProgress * 100)}%</>
+            ) : (
+              <><Video className="w-4 h-4 mr-2" /> Export Video (TikTok)</>
+            )}
+          </Button>
+        </div>
       </div>
 
       <header className="mb-16 text-center space-y-6">
@@ -129,7 +164,7 @@ export default function NovelDetail() {
         ))}
       </div>
 
-      <style dangerouslySetContent={{__html: `
+      <style dangerouslySetInnerHTML={{__html: `
         @media print {
           body {
             background: white !important;
