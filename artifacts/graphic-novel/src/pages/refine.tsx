@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useCreateRefinement } from "@workspace/api-client-react";
-import { addRefinedRef } from "@/lib/refined-refs";
+import { addRefinedRef, getRefinedRefs } from "@/lib/refined-refs";
 
 interface Iteration {
   instructions: string;
@@ -41,8 +41,16 @@ export default function Refine() {
     e.target.value = "";
   };
 
+  const autoLabel = (): string => {
+    const trimmed = label.trim();
+    if (trimmed) return trimmed;
+    const existing = getRefinedRefs().length;
+    return `Subject ${existing + 1}`;
+  };
+
   const generate = async () => {
-    if (!originalDataUrl || !label.trim() || !instructions.trim()) return;
+    if (!originalDataUrl || !instructions.trim()) return;
+    const effectiveLabel = autoLabel();
     // Do NOT resend sampleImageDataUrl — it bloats requests; the server only needs text.
     const history = iterations.slice(-5).map((it) => ({
       instructions: it.instructions,
@@ -53,7 +61,7 @@ export default function Refine() {
       const result = await createRefinement.mutateAsync({
         data: {
           dataUrl: originalDataUrl,
-          label: label.trim(),
+          label: effectiveLabel,
           instructions: instructions.trim(),
           explicit,
           history,
@@ -91,7 +99,7 @@ export default function Refine() {
   const approve = () => {
     if (!current || !originalDataUrl) return;
     addRefinedRef({
-      label: label.trim(),
+      label: autoLabel(),
       dataUrl: current.sampleImageDataUrl,
       description: current.description,
     });
@@ -142,7 +150,9 @@ export default function Refine() {
           <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
 
           <div className="space-y-2">
-            <label className="font-mono text-xs uppercase tracking-widest">Label</label>
+            <label className="font-mono text-xs uppercase tracking-widest">
+              Label <span className="text-muted-foreground normal-case">(optional — auto-generated if blank)</span>
+            </label>
             <Input
               placeholder="e.g. 'Main Character' or 'Sarah'"
               value={label}
@@ -173,7 +183,7 @@ export default function Refine() {
 
           <Button
             onClick={generate}
-            disabled={!originalDataUrl || !label.trim() || !instructions.trim() || createRefinement.isPending}
+            disabled={!originalDataUrl || !instructions.trim() || createRefinement.isPending}
             className="w-full font-bold uppercase tracking-widest"
           >
             {createRefinement.isPending ? (
