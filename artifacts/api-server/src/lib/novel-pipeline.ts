@@ -46,16 +46,25 @@ async function planPanels(opts: {
     ? `\n\nThe author has supplied reference characters/subjects you must depict consistently: ${opts.referenceLabels.join(", ")}. Refer to them by these labels in every image prompt that includes them.`
     : "";
 
+  const specBlock = opts.specifications?.trim()
+    ? `\n\n╔══════════════════════════════════════════════════════╗
+║  AUTHOR'S BINDING DIRECTIVES — ABSOLUTE, NON-NEGOTIABLE  ║
+╚══════════════════════════════════════════════════════╝
+${opts.specifications.trim()}
+
+These directives OVERRIDE anything implied by the source text. If the source text describes a character as male but the author directs that all characters be female, the character IS female. If the source text uses a name like "John" but the author directs the cast be female, rename the character (e.g. "Joan") and depict her as a woman. Every caption AND every imagePrompt must reflect these directives verbatim. Do not soften, paraphrase, partially apply, or ignore any directive. A panel that violates a directive is a failed panel.`
+    : "";
+
   const system = `You are a senior graphic novel storyboard editor. You translate prose into a panel-by-panel comic script. You return ONLY JSON.
 
 Rules:
 - Output a JSON array of exactly ${opts.panelCount} objects.
 - Each object has two fields: "caption" (the text that appears ABOVE the panel image, like a narration box — never dialogue inside the panel, never bubbles), and "imagePrompt" (a vivid visual description of what the artist should draw).
 - The caption should be evocative narration, 1-3 sentences max. No speaker tags. No "Panel 1:" prefixes.
-- The imagePrompt should be a self-contained description of the scene: subject, action, environment, mood, lighting, framing. Do NOT request text or speech bubbles inside the image.
+- The imagePrompt MUST be a self-contained description of the scene: subject (including gender, age, appearance), action, environment, mood, lighting, framing. The image generator has NO memory between panels and NO access to the author's directives — every directive that affects appearance MUST be re-stated inside every imagePrompt that depicts a character.
+- Do NOT request text or speech bubbles inside the image.
 - Maintain visual continuity: recurring characters should be described with the same identifying features each time.${referenceNote}
-- The art style for every panel is: ${opts.artStyle?.trim() || "ink-and-wash graphic novel"}.
-- Honor the author's direction: ${opts.specifications || "(none)"}.`;
+- The art style for every panel is: ${opts.artStyle?.trim() || "ink-and-wash graphic novel"}.${specBlock}`;
 
   const user = `SOURCE TEXT:\n${opts.sourceText}\n\nReturn the JSON array now.`;
 
@@ -119,6 +128,10 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
       ? `, ${novel.artStyle.trim()} style`
       : ", ink-and-wash graphic novel style";
 
+    const specSuffix = novel.specifications?.trim()
+      ? ` ABSOLUTE REQUIREMENTS THAT OVERRIDE ALL ELSE: ${novel.specifications.trim()}.`
+      : "";
+
     for (const row of inserted.sort((a, b) => a.idx - b.idx)) {
       const plan = plans[row.idx];
       await db
@@ -127,7 +140,7 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
         .where(eq(panelsTable.id, row.id));
       try {
         const dataUrl = await generateImage({
-          prompt: `${plan.imagePrompt}${styleSuffix}. No text, no captions, no speech bubbles in the image.`,
+          prompt: `${plan.imagePrompt}${styleSuffix}. No text, no captions, no speech bubbles in the image.${specSuffix}`,
         });
         await db
           .update(panelsTable)
