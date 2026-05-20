@@ -35,6 +35,35 @@ export interface ReferenceImage {
   label: string;
   /** data:image/...;base64 encoded reference image */
   dataUrl: string;
+  /** Optional pre-computed (and user-approved) visual description; when present the pipeline skips its own vision pass. */
+  description?: string;
+}
+
+export interface RefinementFeedback {
+  /** What the user wanted in that iteration. */
+  instructions: string;
+  /** The description the model produced. */
+  description?: string;
+  /** The sample image produced for that iteration. */
+  sampleImageDataUrl?: string;
+  /** What was wrong with that iteration (only set if the user rejected it). */
+  feedback?: string;
+}
+
+export interface RefinementRequest {
+  /** data:image/...;base64 encoded original reference image */
+  dataUrl: string;
+  /** e.g. "Main Character" */
+  label: string;
+  /** How the user wants the reference interpreted ("draw him in Picasso style", "make her less skinny", etc.) */
+  instructions: string;
+  /** Prior iterations of {instructions, description, feedback} */
+  history?: RefinementFeedback[];
+}
+
+export interface RefinementResult {
+  description: string;
+  sampleImageDataUrl: string;
 }
 
 export interface NovelInput {

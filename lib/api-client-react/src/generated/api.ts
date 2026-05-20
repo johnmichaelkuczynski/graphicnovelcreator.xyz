@@ -26,6 +26,8 @@ import type {
   Novel,
   NovelInput,
   NovelSummary,
+  RefinementRequest,
+  RefinementResult,
   Screenplay,
   ScreenplayInput,
   ScreenplaySummary
@@ -196,6 +198,77 @@ export function useListModels<TData = Awaited<ReturnType<typeof listModels>>, TE
 
 
 
+
+export const getCreateRefinementUrl = () => {
+
+
+
+
+  return `/api/refinements`
+}
+
+/**
+ * @summary Iterate on the model's interpretation of a reference photo
+ */
+export const createRefinement = async (refinementRequest: RefinementRequest, options?: RequestInit): Promise<RefinementResult> => {
+
+  return customFetch<RefinementResult>(getCreateRefinementUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      refinementRequest,)
+  }
+);}
+
+
+
+
+export const getCreateRefinementMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createRefinement>>, TError,{data: BodyType<RefinementRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createRefinement>>, TError,{data: BodyType<RefinementRequest>}, TContext> => {
+
+const mutationKey = ['createRefinement'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createRefinement>>, {data: BodyType<RefinementRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createRefinement(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateRefinementMutationResult = NonNullable<Awaited<ReturnType<typeof createRefinement>>>
+    export type CreateRefinementMutationBody = BodyType<RefinementRequest>
+    export type CreateRefinementMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Iterate on the model's interpretation of a reference photo
+ */
+export const useCreateRefinement = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createRefinement>>, TError,{data: BodyType<RefinementRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createRefinement>>,
+        TError,
+        {data: BodyType<RefinementRequest>},
+        TContext
+      > => {
+      return useMutation(getCreateRefinementMutationOptions(options));
+    }
 
 export const getListNovelsUrl = () => {
 

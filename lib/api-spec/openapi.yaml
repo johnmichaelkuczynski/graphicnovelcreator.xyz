@@ -45,6 +45,31 @@ paths:
                 items:
                   $ref: "#/components/schemas/ModelInfo"
 
+  /refinements:
+    post:
+      operationId: createRefinement
+      tags: [novels]
+      summary: Iterate on the model's interpretation of a reference photo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefinementRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefinementResult"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
   /novels:
     get:
       operationId: listNovels
@@ -251,6 +276,54 @@ components:
         dataUrl:
           type: string
           description: data:image/...;base64 encoded reference image
+        description:
+          type: string
+          description: Optional pre-computed (and user-approved) visual description; when present the pipeline skips its own vision pass.
+
+    RefinementFeedback:
+      type: object
+      required: [instructions]
+      properties:
+        instructions:
+          type: string
+          description: What the user wanted in that iteration.
+        description:
+          type: string
+          description: The description the model produced.
+        sampleImageDataUrl:
+          type: string
+          description: The sample image produced for that iteration.
+        feedback:
+          type: string
+          description: What was wrong with that iteration (only set if the user rejected it).
+
+    RefinementRequest:
+      type: object
+      required: [dataUrl, label, instructions]
+      properties:
+        dataUrl:
+          type: string
+          description: data:image/...;base64 encoded original reference image
+        label:
+          type: string
+          description: e.g. "Main Character"
+        instructions:
+          type: string
+          description: How the user wants the reference interpreted ("draw him in Picasso style", "make her less skinny", etc.)
+        history:
+          type: array
+          description: Prior iterations of {instructions, description, feedback}
+          items:
+            $ref: "#/components/schemas/RefinementFeedback"
+
+    RefinementResult:
+      type: object
+      required: [description, sampleImageDataUrl]
+      properties:
+        description:
+          type: string
+        sampleImageDataUrl:
+          type: string
 
     NovelInput:
       type: object

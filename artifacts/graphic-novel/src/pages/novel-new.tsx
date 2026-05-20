@@ -18,6 +18,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 import { FileUploader } from "@/components/file-uploader";
 import { ReferenceImagesUploader, ReferenceImage } from "@/components/reference-images-uploader";
+import { popRefinedRefs } from "@/lib/refined-refs";
 import { ArtStylePicker } from "@/components/art-style-picker";
 
 const formSchema = z.object({
@@ -36,7 +37,7 @@ export default function NovelNew() {
   const { data: models = [] } = useListModels();
   const createNovel = useCreateNovel();
 
-  const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
+  const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>(() => popRefinedRefs());
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),

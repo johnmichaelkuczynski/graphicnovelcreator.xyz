@@ -6,6 +6,7 @@ import { Input } from "./ui/input";
 export interface ReferenceImage {
   label: string;
   dataUrl: string;
+  description?: string;
 }
 
 interface Props {
@@ -55,6 +56,11 @@ export function ReferenceImagesUploader({ images, onChange, required = false }: 
               <div className="absolute inset-x-0 bottom-0 bg-black/80 p-2">
                 <p className="text-white text-xs font-mono truncate">{img.label}</p>
               </div>
+              {img.description && (
+                <span className="absolute top-1 left-1 bg-green-600 text-white text-[10px] font-mono font-bold uppercase tracking-widest px-1.5 py-0.5">
+                  Refined
+                </span>
+              )}
               <button
                 type="button"
                 className="absolute -top-2 -right-2 bg-destructive text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"

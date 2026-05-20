@@ -10,6 +10,7 @@ import NovelDetail from "@/pages/novel-detail";
 import ScreenplayNew from "@/pages/screenplay-new";
 import ScreenplayDetail from "@/pages/screenplay-detail";
 import ImageNovelNew from "@/pages/image-novel-new";
+import Refine from "@/pages/refine";
 
 const queryClient = new QueryClient();
 
@@ -22,6 +23,7 @@ function Router() {
       <Route path="/screenplay/new" component={ScreenplayNew} />
       <Route path="/screenplay/:id" component={ScreenplayDetail} />
       <Route path="/image-novel" component={ImageNovelNew} />
+      <Route path="/refine" component={Refine} />
       <Route component={NotFound} />
     </Switch>
   );

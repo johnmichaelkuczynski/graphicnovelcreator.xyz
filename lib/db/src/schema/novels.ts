@@ -9,7 +9,7 @@ export const novelsTable = pgTable("novels", {
   panelCount: integer("panel_count").notNull(),
   textModel: text("text_model").notNull(),
   explicit: boolean("explicit").notNull().default(false),
-  referenceImages: jsonb("reference_images").$type<Array<{ label: string; dataUrl: string }>>().notNull().default([]),
+  referenceImages: jsonb("reference_images").$type<Array<{ label: string; dataUrl: string; description?: string }>>().notNull().default([]),
   status: text("status").notNull().default("pending"),
   error: text("error"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

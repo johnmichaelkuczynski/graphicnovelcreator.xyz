@@ -20,7 +20,7 @@ export default function Home() {
         </p>
       </section>
 
-      <section className="grid md:grid-cols-3 gap-6">
+      <section className="grid md:grid-cols-4 gap-6">
         <div 
           onClick={() => setLocation('/novel/new')}
           className="group cursor-pointer border-4 border-border p-8 hover:bg-primary hover:text-primary-foreground hover:border-primary transition-all duration-300 transform hover:-translate-y-2 hover:shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[8px_8px_0px_0px_rgba(255,255,255,1)]"
@@ -48,6 +48,16 @@ export default function Home() {
           <ImageIcon className="w-12 h-12 mb-6" />
           <h2 className="text-2xl font-bold font-serif mb-4">Image to Novel</h2>
           <p className="font-mono text-sm opacity-80 mb-6">Use an image as the seed for your next graphic narrative.</p>
+          <ArrowRight className="w-6 h-6 group-hover:translate-x-2 transition-transform" />
+        </div>
+
+        <div
+          onClick={() => setLocation('/refine')}
+          className="group cursor-pointer border-4 border-border p-8 hover:bg-green-600 hover:text-white hover:border-green-600 transition-all duration-300 transform hover:-translate-y-2 hover:shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[8px_8px_0px_0px_rgba(255,255,255,1)]"
+        >
+          <PenTool className="w-12 h-12 mb-6" />
+          <h2 className="text-2xl font-bold font-serif mb-4">Refine a Reference</h2>
+          <p className="font-mono text-sm opacity-80 mb-6">Iterate on a photo until the model nails it, then carry it into your next novel.</p>
           <ArrowRight className="w-6 h-6 group-hover:translate-x-2 transition-transform" />
         </div>
       </section>

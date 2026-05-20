@@ -110,12 +110,22 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
     const refs = novel.referenceImages ?? [];
     let referenceDescription = "";
     if (refs.length) {
-      try {
-        logger.info({ novelId, count: refs.length }, "Describing reference images");
-        referenceDescription = await describeReferenceImages(refs);
-      } catch (err) {
-        logger.warn({ novelId, err: err instanceof Error ? err.message : err }, "Reference image description failed; falling back to labels");
+      // Use pre-approved descriptions when present, only call the vision model for the rest.
+      const preApproved = refs
+        .filter((r) => r.description && r.description.trim())
+        .map((r) => `REFERENCE "${r.label}":\n${r.description!.trim()}`)
+        .join("\n\n");
+      const needVision = refs.filter((r) => !r.description || !r.description.trim());
+      let visionPart = "";
+      if (needVision.length) {
+        try {
+          logger.info({ novelId, count: needVision.length }, "Describing reference images");
+          visionPart = await describeReferenceImages(needVision);
+        } catch (err) {
+          logger.warn({ novelId, err: err instanceof Error ? err.message : err }, "Reference image description failed; falling back to labels");
+        }
       }
+      referenceDescription = [preApproved, visionPart].filter(Boolean).join("\n\n");
     }
 
     const plans = await planPanels({

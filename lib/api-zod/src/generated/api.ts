@@ -29,6 +29,27 @@ export const ListModelsResponse = zod.array(ListModelsResponseItem)
 
 
 /**
+ * @summary Iterate on the model's interpretation of a reference photo
+ */
+export const CreateRefinementBody = zod.object({
+  "dataUrl": zod.string().describe('data:image\/...;base64 encoded original reference image'),
+  "label": zod.string().describe('e.g. \"Main Character\"'),
+  "instructions": zod.string().describe('How the user wants the reference interpreted (\"draw him in Picasso style\", \"make her less skinny\", etc.)'),
+  "history": zod.array(zod.object({
+  "instructions": zod.string().describe('What the user wanted in that iteration.'),
+  "description": zod.string().optional().describe('The description the model produced.'),
+  "sampleImageDataUrl": zod.string().optional().describe('The sample image produced for that iteration.'),
+  "feedback": zod.string().optional().describe('What was wrong with that iteration (only set if the user rejected it).')
+})).optional().describe('Prior iterations of {instructions, description, feedback}')
+})
+
+export const CreateRefinementResponse = zod.object({
+  "description": zod.string(),
+  "sampleImageDataUrl": zod.string()
+})
+
+
+/**
  * @summary List recent graphic novels
  */
 export const ListNovelsResponseItem = zod.object({
@@ -63,7 +84,8 @@ export const CreateNovelBody = zod.object({
   "artStyle": zod.string().optional().describe('e.g. \"noir comic\", \"manga\", \"watercolor\"'),
   "referenceImages": zod.array(zod.object({
   "label": zod.string().describe('e.g. \"the man\" or \"Sarah\"'),
-  "dataUrl": zod.string().describe('data:image\/...;base64 encoded reference image')
+  "dataUrl": zod.string().describe('data:image\/...;base64 encoded reference image'),
+  "description": zod.string().optional().describe('Optional pre-computed (and user-approved) visual description; when present the pipeline skips its own vision pass.')
 })).optional()
 })
 

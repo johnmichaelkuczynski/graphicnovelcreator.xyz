@@ -11,4 +11,6 @@ export interface ReferenceImage {
   label: string;
   /** data:image/...;base64 encoded reference image */
   dataUrl: string;
+  /** Optional pre-computed (and user-approved) visual description; when present the pipeline skips its own vision pass. */
+  description?: string;
 }
