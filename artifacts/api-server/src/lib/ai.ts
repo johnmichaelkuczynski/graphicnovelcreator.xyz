@@ -147,7 +147,46 @@ REFERENCE "<label>":
 
 If multiple references are given, describe each one in turn. Be specific and concrete — avoid vague words like "nice", "interesting", "good".`;
 
-  // Prefer Anthropic, fall back to OpenAI.
+  // Prefer Venice (uncensored) for vision so explicit references aren't silently sanitized.
+  if (process.env.VENICE_API_KEY) {
+    try {
+      const userText = images
+        .map((img, i) => `Reference "${img.label || `ref_${i + 1}`}" follows.`)
+        .join("\n");
+      const content: Array<{ type: "image_url"; image_url: { url: string } } | { type: "text"; text: string }> = [];
+      images.forEach((img, i) => {
+        content.push({ type: "image_url", image_url: { url: img.dataUrl } });
+        content.push({ type: "text", text: `Above is reference "${img.label || `ref_${i + 1}`}".` });
+      });
+      content.push({ type: "text", text: instruction });
+      void userText;
+      const res = await fetch(`${VENICE_BASE}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.VENICE_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "qwen-2.5-vl",
+          messages: [{ role: "user", content }],
+          max_tokens: 2000,
+          venice_parameters: { include_venice_system_prompt: false },
+        }),
+      });
+      if (res.ok) {
+        const json = (await res.json()) as { choices: Array<{ message: { content: string } }> };
+        const out = (json.choices[0]?.message.content ?? "").trim();
+        if (out.length > 200 && /SUBJECT/i.test(out)) return out;
+        logger.warn({ chars: out.length }, "Venice vision returned unusable output; falling back");
+      } else {
+        logger.warn({ status: res.status }, "Venice vision call failed; falling back");
+      }
+    } catch (err) {
+      logger.warn({ err: err instanceof Error ? err.message : err }, "Venice vision threw; falling back");
+    }
+  }
+
+  // Fallbacks: Anthropic, then OpenAI.
   if (anthropicClient) {
     const content: Anthropic.ContentBlockParam[] = [];
     images.forEach((img, i) => {

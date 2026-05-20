@@ -24,7 +24,7 @@ export default function Refine() {
   const [instructions, setInstructions] = useState("");
   const [iterations, setIterations] = useState<Iteration[]>([]);
   const [feedback, setFeedback] = useState("");
-  const [explicit, setExplicit] = useState(false);
+  const [explicit, setExplicit] = useState(true);
 
   const createRefinement = useCreateRefinement();
 

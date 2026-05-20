@@ -152,18 +152,12 @@ Do not add any other commentary.`;
     return (resp.choices[0]?.message.content ?? "").trim();
   };
 
-  // Ordered ladder. For explicit content, Venice first. Otherwise Claude → OpenAI → Venice.
-  const ladder: Array<{ name: string; fn: () => Promise<string> }> = opts.explicit
-    ? [
-        { name: "venice", fn: tryVenice },
-        ...(anthropicClient ? [{ name: "claude", fn: tryClaude }] : []),
-        ...(openaiClient ? [{ name: "openai", fn: tryOpenAI }] : []),
-      ]
-    : [
-        ...(anthropicClient ? [{ name: "claude", fn: tryClaude }] : []),
-        ...(openaiClient ? [{ name: "openai", fn: tryOpenAI }] : []),
-        { name: "venice", fn: tryVenice },
-      ];
+  // Venice (uncensored) is always tried first. Claude/OpenAI are fallbacks only.
+  const ladder: Array<{ name: string; fn: () => Promise<string> }> = [
+    { name: "venice", fn: tryVenice },
+    ...(anthropicClient ? [{ name: "claude", fn: tryClaude }] : []),
+    ...(openaiClient ? [{ name: "openai", fn: tryOpenAI }] : []),
+  ];
 
   for (const step of ladder) {
     try {
