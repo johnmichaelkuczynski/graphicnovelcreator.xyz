@@ -120,6 +120,76 @@ export async function generateText(opts: {
   }
 }
 
+function parseDataUrl(dataUrl: string): { mediaType: string; base64: string } {
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) throw new Error("Reference image is not a base64 data URL");
+  return { mediaType: match[1], base64: match[2] };
+}
+
+export async function describeReferenceImages(
+  images: Array<{ label: string; dataUrl: string }>,
+): Promise<string> {
+  if (!images.length) return "";
+
+  const instruction = `You are a senior art director. The user has uploaded ${images.length} reference image(s) that MUST guide every illustration in a graphic novel.
+
+For each image, write a tight, concrete description that another artist could reproduce. Cover:
+  • SUBJECT IDENTITY (who/what is depicted — gender, age, distinguishing features, clothing, hair, expression). This is how the subject must be drawn in EVERY panel they appear in.
+  • VISUAL STYLE (medium, line work, color palette with specific hues, shading technique, level of detail, texture).
+  • COMPOSITION & MOOD (framing, lighting, atmosphere).
+
+Format your reply EXACTLY like this, with no preamble:
+
+REFERENCE "<label>":
+  SUBJECT: <one paragraph>
+  STYLE: <one paragraph>
+  MOOD: <one short paragraph>
+
+If multiple references are given, describe each one in turn. Be specific and concrete — avoid vague words like "nice", "interesting", "good".`;
+
+  // Prefer Anthropic, fall back to OpenAI.
+  if (anthropicClient) {
+    const content: Anthropic.ContentBlockParam[] = [];
+    images.forEach((img, i) => {
+      const { mediaType, base64 } = parseDataUrl(img.dataUrl);
+      content.push({
+        type: "image",
+        source: { type: "base64", media_type: mediaType as "image/png", data: base64 },
+      });
+      content.push({ type: "text", text: `Above is reference "${img.label || `ref_${i + 1}`}".` });
+    });
+    content.push({ type: "text", text: instruction });
+
+    const msg = await anthropicClient.messages.create({
+      model: "claude-sonnet-4-5",
+      max_tokens: 2000,
+      messages: [{ role: "user", content }],
+    });
+    return msg.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
+  }
+
+  if (openaiClient) {
+    const content: OpenAI.Chat.ChatCompletionContentPart[] = [];
+    images.forEach((img, i) => {
+      content.push({ type: "image_url", image_url: { url: img.dataUrl } });
+      content.push({ type: "text", text: `Above is reference "${img.label || `ref_${i + 1}`}".` });
+    });
+    content.push({ type: "text", text: instruction });
+
+    const resp = await openaiClient.chat.completions.create({
+      model: "gpt-5",
+      messages: [{ role: "user", content }],
+    });
+    return resp.choices[0]?.message.content ?? "";
+  }
+
+  // Last resort: just list labels.
+  return `Reference subjects to depict consistently in every relevant panel: ${images.map((i) => i.label).join(", ")}.`;
+}
+
 export async function generateImage(opts: {
   prompt: string;
   style?: string;

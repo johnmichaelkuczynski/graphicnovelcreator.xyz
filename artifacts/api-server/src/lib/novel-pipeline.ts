@@ -1,6 +1,6 @@
 import { eq, asc } from "drizzle-orm";
 import { db, novelsTable, panelsTable } from "@workspace/db";
-import { generateText, generateImage, type ZhiId } from "./ai";
+import { generateText, generateImage, describeReferenceImages, type ZhiId } from "./ai";
 import { logger } from "./logger";
 
 interface PanelPlan {
@@ -41,8 +41,15 @@ async function planPanels(opts: {
   textModel: ZhiId;
   explicit: boolean;
   referenceLabels: string[];
+  referenceDescription: string;
 }): Promise<PanelPlan[]> {
-  const referenceNote = opts.referenceLabels.length
+  const referenceNote = opts.referenceDescription
+    ? `\n\n══ REFERENCE IMAGES (BINDING) ══
+The author has uploaded reference image(s). A vision model has produced detailed descriptions below. Every imagePrompt that depicts one of these subjects MUST quote the subject description verbatim or paraphrase it faithfully. The visual style of every panel — whether the reference subject appears or not — MUST match the STYLE block below.
+
+${opts.referenceDescription}
+══ END REFERENCES ══`
+    : opts.referenceLabels.length
     ? `\n\nThe author has supplied reference characters/subjects you must depict consistently: ${opts.referenceLabels.join(", ")}. Refer to them by these labels in every image prompt that includes them.`
     : "";
 
@@ -100,6 +107,17 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
   try {
     await db.update(novelsTable).set({ status: "generating" }).where(eq(novelsTable.id, novelId));
 
+    const refs = novel.referenceImages ?? [];
+    let referenceDescription = "";
+    if (refs.length) {
+      try {
+        logger.info({ novelId, count: refs.length }, "Describing reference images");
+        referenceDescription = await describeReferenceImages(refs);
+      } catch (err) {
+        logger.warn({ novelId, err: err instanceof Error ? err.message : err }, "Reference image description failed; falling back to labels");
+      }
+    }
+
     const plans = await planPanels({
       sourceText: novel.sourceText,
       specifications: novel.specifications,
@@ -107,7 +125,8 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
       panelCount: novel.panelCount,
       textModel: novel.textModel as ZhiId,
       explicit: novel.explicit,
-      referenceLabels: (novel.referenceImages ?? []).map((r) => r.label),
+      referenceLabels: refs.map((r) => r.label),
+      referenceDescription,
     });
 
     // Insert plan rows up front so the client can show progress.
@@ -132,6 +151,10 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
       ? ` ABSOLUTE REQUIREMENTS THAT OVERRIDE ALL ELSE: ${novel.specifications.trim()}.`
       : "";
 
+    const referenceSuffix = referenceDescription
+      ? ` The visual style MUST match this reference exactly: ${referenceDescription.replace(/\s+/g, " ").trim()}`
+      : "";
+
     for (const row of inserted.sort((a, b) => a.idx - b.idx)) {
       const plan = plans[row.idx];
       await db
@@ -140,7 +163,7 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
         .where(eq(panelsTable.id, row.id));
       try {
         const dataUrl = await generateImage({
-          prompt: `${plan.imagePrompt}${styleSuffix}. No text, no captions, no speech bubbles in the image.${specSuffix}`,
+          prompt: `${plan.imagePrompt}${styleSuffix}. No text, no captions, no speech bubbles in the image.${specSuffix}${referenceSuffix}`,
         });
         await db
           .update(panelsTable)
