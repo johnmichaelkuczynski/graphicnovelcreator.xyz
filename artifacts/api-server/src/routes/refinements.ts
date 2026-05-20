@@ -15,7 +15,7 @@ router.post("/refinements", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const { dataUrl, label, instructions, history } = parsed.data;
+  const { dataUrl, label, instructions, explicit, history } = parsed.data;
 
   if (!DATA_URL_RE.test(dataUrl) || dataUrl.length > MAX_DATA_URL) {
     res.status(400).json({ error: "Invalid reference image (must be a base64 image data URL, ≤12MB)" });
@@ -36,6 +36,7 @@ router.post("/refinements", async (req, res): Promise<void> => {
       dataUrl,
       label,
       instructions,
+      explicit: !!explicit,
       history: trimmedHistory,
     });
     res.json(result);

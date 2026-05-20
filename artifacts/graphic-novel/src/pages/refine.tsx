@@ -4,6 +4,7 @@ import { ArrowLeft, Upload, Loader2, Check, X, Sparkles, Plus } from "lucide-rea
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { useCreateRefinement } from "@workspace/api-client-react";
 import { addRefinedRef } from "@/lib/refined-refs";
 
@@ -23,6 +24,7 @@ export default function Refine() {
   const [instructions, setInstructions] = useState("");
   const [iterations, setIterations] = useState<Iteration[]>([]);
   const [feedback, setFeedback] = useState("");
+  const [explicit, setExplicit] = useState(false);
 
   const createRefinement = useCreateRefinement();
 
@@ -53,6 +55,7 @@ export default function Refine() {
           dataUrl: originalDataUrl,
           label: label.trim(),
           instructions: instructions.trim(),
+          explicit,
           history,
         },
       });
@@ -156,6 +159,16 @@ export default function Refine() {
               onChange={(e) => setInstructions(e.target.value)}
               className="min-h-[140px] font-mono"
             />
+          </div>
+
+          <div className="flex items-center justify-between border-2 border-border p-3 bg-background">
+            <div>
+              <p className="font-mono text-xs uppercase tracking-widest font-bold">Explicit / Adult</p>
+              <p className="font-mono text-[10px] text-muted-foreground mt-1">
+                Required for nudity or adult content — uses the uncensored model. Mainstream models will refuse and return an unrelated image.
+              </p>
+            </div>
+            <Switch checked={explicit} onCheckedChange={setExplicit} />
           </div>
 
           <Button

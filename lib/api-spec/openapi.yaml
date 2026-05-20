@@ -310,6 +310,9 @@ components:
         instructions:
           type: string
           description: How the user wants the reference interpreted ("draw him in Picasso style", "make her less skinny", etc.)
+        explicit:
+          type: boolean
+          description: If true, use Venice (uncensored) for both vision and image generation. Required for nudity/adult references.
         history:
           type: array
           description: Prior iterations of {instructions, description, feedback}

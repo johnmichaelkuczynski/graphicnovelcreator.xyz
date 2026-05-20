@@ -35,6 +35,7 @@ export const CreateRefinementBody = zod.object({
   "dataUrl": zod.string().describe('data:image\/...;base64 encoded original reference image'),
   "label": zod.string().describe('e.g. \"Main Character\"'),
   "instructions": zod.string().describe('How the user wants the reference interpreted (\"draw him in Picasso style\", \"make her less skinny\", etc.)'),
+  "explicit": zod.boolean().optional().describe('If true, use Venice (uncensored) for both vision and image generation. Required for nudity\/adult references.'),
   "history": zod.array(zod.object({
   "instructions": zod.string().describe('What the user wanted in that iteration.'),
   "description": zod.string().optional().describe('The description the model produced.'),

@@ -57,6 +57,8 @@ export interface RefinementRequest {
   label: string;
   /** How the user wants the reference interpreted ("draw him in Picasso style", "make her less skinny", etc.) */
   instructions: string;
+  /** If true, use Venice (uncensored) for both vision and image generation. Required for nudity/adult references. */
+  explicit?: boolean;
   /** Prior iterations of {instructions, description, feedback} */
   history?: RefinementFeedback[];
 }
