@@ -258,7 +258,7 @@ export default function NovelDetail() {
             
             <div className="relative aspect-[3/2] md:aspect-video w-full border-4 border-border bg-muted flex items-center justify-center overflow-hidden print:border-2">
               {panel.status === 'done' && panel.imageDataUrl ? (
-                <img src={panel.imageDataUrl} alt={`Panel ${idx + 1}`} className="w-full h-full object-cover" />
+                <img src={panel.imageDataUrl} alt={`Panel ${idx + 1}`} className="w-full h-full object-contain bg-muted" />
               ) : panel.status === 'failed' ? (
                 <div className="text-center p-4">
                   <AlertCircle className="w-8 h-8 text-destructive mx-auto mb-2" />

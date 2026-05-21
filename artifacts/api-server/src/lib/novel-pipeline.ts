@@ -193,6 +193,11 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
     // below that ceiling. Keep it >0 so 0 doesn't accidentally disable seeding upstream.
     const novelSeed = (((novelId * 2654435761) >>> 0) % 999_999_999) + 1;
 
+    // Framing rules appended to every prompt to fight the model's tendency to crop heads when
+    // generating portrait-heavy scenes. The negative list adds the same idea in reverse.
+    const framingRule =
+      " COMPOSITION: full subject visible inside the frame, head and full face clearly visible and NOT cropped, leave generous headroom above the subject, medium-shot or wider unless the scene logically requires a close-up, no part of the head or eyes touching the top edge.";
+
     for (const row of inserted.sort((a, b) => a.idx - b.idx)) {
       const plan = plans[row.idx];
       await db
@@ -201,10 +206,17 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
         .where(eq(panelsTable.id, row.id));
       try {
         const dataUrl = await generateImage({
-          prompt: `${refStyleLead}${userStyleLead}${fallbackStyle}${plan.imagePrompt}. No text, no captions, no speech bubbles, no panel borders inside the image.${specSuffix}`,
+          prompt: `${refStyleLead}${userStyleLead}${fallbackStyle}${plan.imagePrompt}. No text, no captions, no speech bubbles, no panel borders inside the image.${framingRule}${specSuffix}`,
           referenceImageDataUrl: firstRef?.dataUrl,
-          referenceStrength: 0.72,
+          // Lower strength = the reference image dominates more, which keeps per-panel style
+          // (medium, palette, line quality) much more consistent across the whole novel.
+          referenceStrength: 0.55,
           seed: novelSeed,
+          // Generate at 16:9 to match the panel display container on the detail page; this
+          // eliminates the top/bottom crop that was decapitating subjects when a square image
+          // was forced into a landscape container with object-cover.
+          width: 1024,
+          height: 576,
         });
         await db
           .update(panelsTable)

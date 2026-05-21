@@ -262,9 +262,13 @@ export async function generateImage(opts: {
     steps: 30,
     cfg_scale: 7.5,
     style_preset: opts.style,
+    // Style-neutral negatives only. Earlier versions forbade "illustration, drawing, painting,
+    // cartoon, anime" which actively fought against any user-chosen illustration art style.
+    // Composition negatives (cropped head, out of frame, etc.) prevent the most common failure
+    // mode: portraits with the subject's head chopped off. Callers may override entirely.
     negative_prompt:
       opts.negativePrompt ??
-      "cartoon, anime, chibi, cute, stylized, illustration, drawing, sketch, painting, 2d, flat shading, cel shaded, pixar, disney, dreamworks, children's book, low quality, blurry, deformed, extra limbs, bad anatomy, text, watermark, signature, logo",
+      "cropped head, head out of frame, headless, decapitated, cut off head, face cut off, eyes cropped, out of frame, off-screen, low quality, blurry, jpeg artifacts, deformed, mutated, extra limbs, missing limbs, extra fingers, fused fingers, bad anatomy, asymmetric eyes, text, captions, speech bubbles, watermark, signature, logo",
     safe_mode: false,
     hide_watermark: true,
     return_binary: false,
