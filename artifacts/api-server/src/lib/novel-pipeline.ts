@@ -193,10 +193,24 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
     // below that ceiling. Keep it >0 so 0 doesn't accidentally disable seeding upstream.
     const novelSeed = (((novelId * 2654435761) >>> 0) % 999_999_999) + 1;
 
-    // Framing rules appended to every prompt to fight the model's tendency to crop heads when
-    // generating portrait-heavy scenes. The negative list adds the same idea in reverse.
+    // HARD RULE 1 (heads): generate at 4:3 with explicit wide-shot framing. Square or 16:9
+    // crops too aggressively on portrait-heavy scenes; 4:3 with "wide shot, head in upper
+    // third with empty space above" instructions makes head-cropping essentially impossible.
     const framingRule =
-      " COMPOSITION: full subject visible inside the frame, head and full face clearly visible and NOT cropped, leave generous headroom above the subject, medium-shot or wider unless the scene logically requires a close-up, no part of the head or eyes touching the top edge.";
+      " HARD COMPOSITION RULES (do not violate): WIDE SHOT or MEDIUM-WIDE SHOT only. The subject's ENTIRE head and FULL face must be visible with substantial empty space above the head. Frame from at least the waist up, preferably full body. NEVER a close-up. NEVER a portrait crop. NEVER let any part of the head, hair, or face touch or exceed the top edge of the image.";
+
+    // HARD RULE 2 (style): after panel 1 succeeds, use IT as the img2img reference for every
+    // subsequent panel. This is the only reliable way to lock style across a whole novel —
+    // text prompts and seeds alone are not sufficient because the model still drifts.
+    // styleAnchor starts as the user's uploaded reference (if any) and is overwritten by
+    // panel 1's actual output, which encodes the locked-in medium, palette, line quality,
+    // and character appearance.
+    let styleAnchor: string | undefined = firstRef?.dataUrl;
+    // First panel keeps higher strength (more freedom to interpret the prompt) when anchored
+    // to a user-uploaded reference; subsequent panels anchor to the first generated panel at
+    // low strength so style is preserved but the per-panel scene can still change.
+    const FIRST_PANEL_STRENGTH = 0.6;
+    const ANCHOR_STRENGTH = 0.35;
 
     for (const row of inserted.sort((a, b) => a.idx - b.idx)) {
       const plan = plans[row.idx];
@@ -205,19 +219,22 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
         .set({ status: "generating" })
         .where(eq(panelsTable.id, row.id));
       try {
+        const isFirstPanel = row.idx === 0;
         const dataUrl = await generateImage({
           prompt: `${refStyleLead}${userStyleLead}${fallbackStyle}${plan.imagePrompt}. No text, no captions, no speech bubbles, no panel borders inside the image.${framingRule}${specSuffix}`,
-          referenceImageDataUrl: firstRef?.dataUrl,
-          // Lower strength = the reference image dominates more, which keeps per-panel style
-          // (medium, palette, line quality) much more consistent across the whole novel.
-          referenceStrength: 0.55,
+          referenceImageDataUrl: styleAnchor,
+          referenceStrength: isFirstPanel ? FIRST_PANEL_STRENGTH : ANCHOR_STRENGTH,
           seed: novelSeed,
-          // Generate at 16:9 to match the panel display container on the detail page; this
-          // eliminates the top/bottom crop that was decapitating subjects when a square image
-          // was forced into a landscape container with object-cover.
+          // 4:3 = more vertical room for heads. The detail page uses object-contain so the
+          // taller image is letterboxed, not cropped.
           width: 1024,
-          height: 576,
+          height: 768,
         });
+        // Lock subsequent panels to panel 1's actual output — this is what forces style
+        // consistency across the entire novel.
+        if (isFirstPanel) {
+          styleAnchor = dataUrl;
+        }
         await db
           .update(panelsTable)
           .set({ status: "done", imageDataUrl: dataUrl })
