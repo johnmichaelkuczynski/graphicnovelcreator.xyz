@@ -6,11 +6,9 @@
     <rect x="64"  y="278" width="170" height="170" fill="#0a0a0a"/>
     <rect x="278" y="278" width="170" height="170" fill="#FFE8DC"/>
   </g>
-  <g fill="#0a0a0a" font-family="Impact, 'Arial Black', sans-serif" font-weight="900" text-anchor="middle">
-    <text x="149" y="178" font-size="140">G</text>
-  </g>
-  <g fill="#FFE8DC" font-family="Impact, 'Arial Black', sans-serif" font-weight="900" text-anchor="middle">
-    <text x="363" y="178" font-size="140">N</text>
+  <g font-family="'DejaVu Sans', 'Arial Black', Impact, sans-serif" font-weight="900" text-anchor="middle">
+    <text x="149" y="195" font-size="150" fill="#0a0a0a">G</text>
+    <text x="363" y="195" font-size="150" fill="#FFE8DC">N</text>
   </g>
   <circle cx="149" cy="363" r="48" fill="#FF3C00" stroke="#FFE8DC" stroke-width="10"/>
   <g fill="#FF3C00" stroke="#0a0a0a" stroke-width="10" stroke-linejoin="round">
