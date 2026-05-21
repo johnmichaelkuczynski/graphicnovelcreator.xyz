@@ -91,32 +91,49 @@ function wrapText(
   return lines;
 }
 
-function drawFrame(
+// --- Low-level drawing primitives ------------------------------------------------
+//
+// Split into independent layers so the crossfade path can compose them without
+// re-clearing or re-blending. drawFrame() is the single-panel convenience that
+// composes them all at full opacity; drawCrossfade() invokes the same primitives
+// in the right order to cleanly dissolve between two panels.
+
+function clearFrame(ctx: CanvasRenderingContext2D, W: number, H: number) {
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawImageCover(
   ctx: CanvasRenderingContext2D,
   W: number,
   H: number,
   img: HTMLImageElement,
-  caption: string,
-  panelIdx: number,
-  totalPanels: number,
+  alpha: number,
 ) {
-  // Fill the entire frame with black first so any letterboxing (if the image's aspect
-  // ratio somehow doesn't match) shows as black bars rather than the old beige paper.
-  ctx.fillStyle = "#000000";
-  ctx.fillRect(0, 0, W, H);
-
-  // Draw the panel image edge-to-edge using "cover" semantics: scale to fill the
-  // whole frame, crop the overflow. This means the image takes up the entire 1080x1920
-  // viewport with no margins — the caption is overlaid on top.
+  if (alpha <= 0) return;
+  ctx.globalAlpha = alpha;
   const coverScale = Math.max(W / img.width, H / img.height);
   const drawW = img.width * coverScale;
   const drawH = img.height * coverScale;
   const drawX = (W - drawW) / 2;
   const drawY = (H - drawH) / 2;
   ctx.drawImage(img, drawX, drawY, drawW, drawH);
+  ctx.globalAlpha = 1;
+}
 
-  // Caption sits as an overlay at the top of the frame, with a semi-opaque white
-  // backing so it stays readable over any image.
+function drawOverlays(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  H: number,
+  caption: string,
+  panelIdx: number,
+  totalPanels: number,
+  alpha: number,
+) {
+  if (alpha <= 0) return;
+  ctx.globalAlpha = alpha;
+
   const pad = Math.round(W * 0.05);
   const captionBoxX = pad;
   const captionBoxY = pad;
@@ -127,9 +144,7 @@ function drawFrame(
 
   const lineHeight = Math.round(W * 0.06);
   const lines = caption ? wrapText(ctx, caption, captionBoxW - pad * 2) : [];
-  const captionBoxH = lines.length > 0
-    ? lines.length * lineHeight + pad * 1.2
-    : 0;
+  const captionBoxH = lines.length > 0 ? lines.length * lineHeight + pad * 1.2 : 0;
 
   if (captionBoxH > 0) {
     ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
@@ -137,15 +152,12 @@ function drawFrame(
     ctx.strokeStyle = "#1a1a1a";
     ctx.lineWidth = Math.max(4, W * 0.005);
     ctx.strokeRect(captionBoxX, captionBoxY, captionBoxW, captionBoxH);
-
     ctx.fillStyle = "#1a1a1a";
     lines.forEach((ln, i) => {
       ctx.fillText(ln, captionBoxX + pad * 0.6, captionBoxY + pad * 0.6 + i * lineHeight);
     });
   }
 
-  // Page indicator pill in the bottom-left, on its own readable backing so it
-  // doesn't get lost over busy artwork.
   ctx.font = `700 ${Math.round(W * 0.028)}px "Courier New", monospace`;
   ctx.textBaseline = "alphabetic";
   const counter = `${panelIdx + 1} / ${totalPanels}`;
@@ -162,6 +174,47 @@ function drawFrame(
   ctx.strokeRect(counterX, counterY, counterW + counterPadX * 2, counterH);
   ctx.fillStyle = "#1a1a1a";
   ctx.fillText(counter, counterX + counterPadX, counterY + counterH - counterPadY);
+
+  ctx.globalAlpha = 1;
+}
+
+function drawFrame(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  H: number,
+  img: HTMLImageElement,
+  caption: string,
+  panelIdx: number,
+  totalPanels: number,
+) {
+  clearFrame(ctx, W, H);
+  drawImageCover(ctx, W, H, img, 1);
+  drawOverlays(ctx, W, H, caption, panelIdx, totalPanels, 1);
+}
+
+// Clean dissolve between two panels:
+//  - clear the frame ONCE (no doubled black fill that would darken mid-transition)
+//  - paint outgoing image at (1 - t), then incoming image at t, on the same surface
+//  - fade outgoing overlay out and incoming overlay in with the same curve so
+//    captions/page counters don't briefly stack on top of each other
+function drawCrossfade(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  H: number,
+  fromImg: HTMLImageElement,
+  fromCaption: string,
+  fromIdx: number,
+  toImg: HTMLImageElement,
+  toCaption: string,
+  toIdx: number,
+  totalPanels: number,
+  t: number, // 0 = pure "from", 1 = pure "to"
+) {
+  clearFrame(ctx, W, H);
+  drawImageCover(ctx, W, H, fromImg, 1 - t);
+  drawImageCover(ctx, W, H, toImg, t);
+  drawOverlays(ctx, W, H, fromCaption, fromIdx, totalPanels, 1 - t);
+  drawOverlays(ctx, W, H, toCaption, toIdx, totalPanels, t);
 }
 
 export interface VideoExportResult {
@@ -274,24 +327,72 @@ async function exportViaWebCodecs(
     framerate: fps,
   });
 
-  const framesPerPanel = Math.max(1, Math.round(secondsPerPanel * fps));
+  const framesPerPanel = Math.max(2, Math.round(secondsPerPanel * fps));
+  // Crossfade lasts ~0.6s, but never more than 1/3 of a panel's screen time so
+  // very short panels still have a recognisable "hold" phase before transitioning.
+  const transitionFrames = Math.max(
+    1,
+    Math.min(Math.round(0.6 * fps), Math.floor(framesPerPanel / 3)),
+  );
   const totalFrames = framesPerPanel * panels.length;
   const frameDurationUs = Math.round(1_000_000 / fps);
   const keyframeEvery = fps * 2; // 2-second GOP
 
+  // Reusable bitmap-snapshot helper. WITHOUT this, Chromium's `new VideoFrame(canvas)`
+  // sometimes hands the encoder a GPU texture reference that gets overwritten before
+  // the encoder reads it — so every frame in the file ends up showing the LAST drawn
+  // image, or worse, the first one repeated forever. `createImageBitmap` forces an
+  // immutable pixel copy, which is the only reliable way to feed a high-FPS slideshow
+  // into VideoEncoder.
+  async function snapshotAndEncode(timestamp: number, isKey: boolean) {
+    const bitmap = await createImageBitmap(canvas);
+    const frame = new wc.VideoFrame(bitmap, { timestamp, duration: frameDurationUs });
+    // Backpressure: if the encoder queue is backed up, wait for it to drain a bit
+    // before pushing more. Without this, on slower machines the encoder silently
+    // drops frames and the muxed file has gaps / repeated frames.
+    // Watchdog: bail out after ~5s of waiting so we don't hang the export forever
+    // if the encoder stalls without emitting an error.
+    let waited = 0;
+    while (videoEncoder.encodeQueueSize > 8) {
+      await new Promise((r) => setTimeout(r, 4));
+      waited += 4;
+      if (encoderError) break;
+      if (waited > 5000) throw new Error("Video encoder stalled (queue did not drain)");
+    }
+    videoEncoder.encode(frame, { keyFrame: isKey });
+    frame.close();
+    bitmap.close();
+  }
+
   let frameIdx = 0;
   for (let i = 0; i < panels.length; i++) {
-    for (let f = 0; f < framesPerPanel; f++) {
+    const hasNext = i < panels.length - 1;
+    const holdFrames = hasNext ? framesPerPanel - transitionFrames : framesPerPanel;
+
+    // Hold phase: panel i alone, full opacity.
+    for (let f = 0; f < holdFrames; f++) {
       drawFrame(ctx, width, height, images[i], panels[i].caption, i, panels.length);
-      const timestamp = frameIdx * frameDurationUs;
-      const frame = new wc.VideoFrame(canvas, { timestamp, duration: frameDurationUs });
-      videoEncoder.encode(frame, { keyFrame: frameIdx % keyframeEvery === 0 });
-      frame.close();
+      await snapshotAndEncode(frameIdx * frameDurationUs, frameIdx % keyframeEvery === 0);
       frameIdx++;
       if (onProgress) onProgress((frameIdx / totalFrames) * (audioBuffer ? 0.85 : 1.0));
-      // Yield occasionally so the UI stays responsive and the encoder queue can drain.
-      if (frameIdx % 15 === 0) await new Promise((r) => setTimeout(r, 0));
       if (encoderError) throw encoderError;
+    }
+
+    // Crossfade phase: blend panel i into panel i+1 over transitionFrames frames.
+    if (hasNext) {
+      for (let f = 0; f < transitionFrames; f++) {
+        const t = (f + 1) / (transitionFrames + 1); // 0 < t < 1
+        drawCrossfade(
+          ctx, width, height,
+          images[i], panels[i].caption, i,
+          images[i + 1], panels[i + 1].caption, i + 1,
+          panels.length, t,
+        );
+        await snapshotAndEncode(frameIdx * frameDurationUs, frameIdx % keyframeEvery === 0);
+        frameIdx++;
+        if (onProgress) onProgress((frameIdx / totalFrames) * (audioBuffer ? 0.85 : 1.0));
+        if (encoderError) throw encoderError;
+      }
     }
   }
   await videoEncoder.flush();
