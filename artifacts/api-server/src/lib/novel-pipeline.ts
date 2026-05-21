@@ -71,7 +71,12 @@ Rules:
 - The imagePrompt MUST be a self-contained description of the scene: subject (including gender, age, appearance), action, environment, mood, lighting, framing. The image generator has NO memory between panels and NO access to the author's directives — every directive that affects appearance MUST be re-stated inside every imagePrompt that depicts a character.
 - Do NOT request text or speech bubbles inside the image.
 - Maintain visual continuity: recurring characters should be described with the same identifying features each time.${referenceNote}
-- The art style for every panel is: ${opts.artStyle?.trim() || "ink-and-wash graphic novel"}.${specBlock}`;
+- The art style for every panel is: ${
+    opts.artStyle?.trim() ||
+    (opts.referenceDescription
+      ? "exactly matching the STYLE block from the reference images above — do not impose any default cartoon, ink-and-wash, or stylized look; mirror the medium, palette, line-quality, and realism level of the reference"
+      : "cinematic, richly detailed illustration")
+  }.${specBlock}`;
 
   const user = `SOURCE TEXT:\n${opts.sourceText}\n\nReturn the JSON array now.`;
 
@@ -153,17 +158,32 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
       )
       .returning({ id: panelsTable.id, idx: panelsTable.idx });
 
-    const styleSuffix = novel.artStyle?.trim()
-      ? `, ${novel.artStyle.trim()} style`
-      : ", ink-and-wash graphic novel style";
+    // Build a STYLE-FIRST prompt. Image models weight the beginning of the prompt most heavily,
+    // so we lead with the visual style (from references when available, else the user's art direction).
+    // Extract ONLY the STYLE: blocks from the reference description — including SUBJECT/MOOD here
+    // would inject the reference subject into every panel even when they aren't the focus.
+    const userStyle = novel.artStyle?.trim();
+    const styleOnly = referenceDescription
+      ? Array.from(referenceDescription.matchAll(/STYLE\s*:\s*([^\n]+(?:\n(?!\s*(?:SUBJECT|MOOD|REFERENCE)\b)[^\n]+)*)/gi))
+          .map((m) => m[1].trim())
+          .filter(Boolean)
+          .join(" ")
+      : "";
+    const refStyleLead = styleOnly
+      ? `Visual style MUST match the reference images exactly — same medium, palette, level of realism, and rendering. ${styleOnly.replace(/\s+/g, " ").trim()}. `
+      : "";
+    const userStyleLead = userStyle ? `Art direction: ${userStyle}. ` : "";
+    // Only fall back to a generic "illustration" tag when there is NO reference and NO user style.
+    const fallbackStyle = !referenceDescription && !userStyle ? "Cinematic, richly detailed illustration. " : "";
 
     const specSuffix = novel.specifications?.trim()
       ? ` ABSOLUTE REQUIREMENTS THAT OVERRIDE ALL ELSE: ${novel.specifications.trim()}.`
       : "";
 
-    const referenceSuffix = referenceDescription
-      ? ` The visual style MUST match this reference exactly: ${referenceDescription.replace(/\s+/g, " ").trim()}`
-      : "";
+    // Use the first reference image as an img2img seed so the model literally sees the visual,
+    // not just a text description of it. Strength is tuned so composition can change per panel
+    // but the medium / realism / look are preserved.
+    const firstRef = refs.find((r) => r.dataUrl && r.dataUrl.startsWith("data:"));
 
     for (const row of inserted.sort((a, b) => a.idx - b.idx)) {
       const plan = plans[row.idx];
@@ -173,7 +193,9 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
         .where(eq(panelsTable.id, row.id));
       try {
         const dataUrl = await generateImage({
-          prompt: `${plan.imagePrompt}${styleSuffix}. No text, no captions, no speech bubbles in the image.${specSuffix}${referenceSuffix}`,
+          prompt: `${refStyleLead}${userStyleLead}${fallbackStyle}${plan.imagePrompt}. No text, no captions, no speech bubbles, no panel borders inside the image.${specSuffix}`,
+          referenceImageDataUrl: firstRef?.dataUrl,
+          referenceStrength: 0.72,
         });
         await db
           .update(panelsTable)

@@ -232,28 +232,50 @@ If multiple references are given, describe each one in turn. Be specific and con
 export async function generateImage(opts: {
   prompt: string;
   style?: string;
+  negativePrompt?: string;
+  referenceImageDataUrl?: string;
+  referenceStrength?: number;
+  width?: number;
+  height?: number;
 }): Promise<string> {
   if (!process.env.VENICE_API_KEY) throw new Error("VENICE_API_KEY not set");
+  const body: Record<string, unknown> = {
+    model: "venice-sd35",
+    prompt: opts.prompt,
+    width: opts.width ?? 1024,
+    height: opts.height ?? 1024,
+    steps: 30,
+    cfg_scale: 7.5,
+    style_preset: opts.style,
+    negative_prompt:
+      opts.negativePrompt ??
+      "text, watermark, signature, logo, low quality, blurry, deformed, extra limbs, bad anatomy",
+    safe_mode: false,
+    hide_watermark: true,
+    return_binary: false,
+  };
+  if (opts.referenceImageDataUrl) {
+    const { base64 } = parseDataUrl(opts.referenceImageDataUrl);
+    body.image = base64;
+    body.strength = opts.referenceStrength ?? 0.65;
+  }
   const res = await fetch(`${VENICE_BASE}/image/generate`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${process.env.VENICE_API_KEY}`,
     },
-    body: JSON.stringify({
-      model: "venice-sd35",
-      prompt: opts.prompt,
-      width: 1024,
-      height: 1024,
-      steps: 20,
-      cfg_scale: 7,
-      style_preset: opts.style,
-      safe_mode: false,
-      hide_watermark: true,
-      return_binary: false,
-    }),
+    body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Venice image error ${res.status}: ${await res.text()}`);
+  if (!res.ok) {
+    const errText = await res.text();
+    // If img2img failed (e.g. parameter not supported), retry without the reference image.
+    if (opts.referenceImageDataUrl) {
+      logger.warn({ status: res.status, errText: errText.slice(0, 300) }, "Venice img2img failed; retrying text-only");
+      return generateImage({ ...opts, referenceImageDataUrl: undefined });
+    }
+    throw new Error(`Venice image error ${res.status}: ${errText}`);
+  }
   const json = (await res.json()) as { images?: string[]; data?: Array<{ b64_json?: string }> };
   const b64 = json.images?.[0] ?? json.data?.[0]?.b64_json;
   if (!b64) throw new Error("Venice returned no image");
