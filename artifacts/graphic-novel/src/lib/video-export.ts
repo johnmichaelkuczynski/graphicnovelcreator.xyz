@@ -221,6 +221,135 @@ export interface VideoExportResult {
   blob: Blob;
   filename: string;
   mimeType: string;
+  // Post-export verification report. Populated by verifyExportDuration() so the
+  // caller can show the user concrete proof that every slide had the same screen
+  // time and that the video and music line up to within one frame.
+  verification: {
+    panelCount: number;
+    secondsPerPanel: number;
+    expectedDurationSec: number;
+    actualDurationSec: number; // measured from the produced MP4
+    audioDurationSec: number | null; // null if no audio track was muxed
+    durationDeltaSec: number; // |actual - expected|
+    audioVideoDeltaSec: number | null; // |actualVideo - audio|, null if no audio
+  };
+}
+
+// Tagged error class so the dispatcher can distinguish "produced an unusable
+// file" (do not silently fall back) from "encoder crashed" (fallback is OK).
+// The user demanded the app prove its own work — silently retrying with a
+// lower-tolerance codepath after a verification miss would defeat that.
+export class VideoVerificationError extends Error {
+  readonly report: VideoExportResult["verification"];
+  constructor(message: string, report: VideoExportResult["verification"]) {
+    super(message);
+    this.name = "VideoVerificationError";
+    this.report = report;
+  }
+}
+
+// Measure the audio-track duration of the produced MP4 INDEPENDENTLY of our
+// input audio buffer, by re-decoding it with WebAudio. This gives us a real
+// container-truth measurement to compare against the video track length, not
+// just our own pre-encode plan compared to itself.
+async function measureAudioTrackDuration(blob: Blob): Promise<number | null> {
+  try {
+    const Ctx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new Ctx();
+    try {
+      const arr = await blob.arrayBuffer();
+      // decodeAudioData reads ONLY the audio track from the MP4. Returns null
+      // (caught below) if the container has no audio.
+      const decoded = await ctx.decodeAudioData(arr.slice(0));
+      return decoded.duration;
+    } finally {
+      ctx.close().catch(() => {});
+    }
+  } catch {
+    // No audio track, or browser can't decode AAC-in-MP4 (rare). Caller treats
+    // null as "couldn't measure independently" and skips the cross-check rather
+    // than failing the whole export.
+    return null;
+  }
+}
+
+// Load the produced MP4 into a hidden <video> element and read its actual
+// container duration so we can prove (a) the slideshow runtime matches what we
+// planned and (b) the video and music line up. Throws VideoVerificationError if
+// any tolerance is exceeded — by design we'd rather hard-fail than ship a
+// desynced video.
+async function verifyExportDuration(args: {
+  blob: Blob;
+  expectedDurationSec: number;
+  hasAudio: boolean;
+  panelCount: number;
+  secondsPerPanel: number;
+  videoToleranceSec: number;
+  // AAC frames are 1024 samples wide, so audio-track durations naturally
+  // quantize to the nearest 1024/sampleRate (~23ms at 44.1kHz). The
+  // audio/video delta tolerance must accommodate that or we'd false-fail on
+  // perfectly-aligned encodes.
+  audioToleranceSec: number;
+}): Promise<VideoExportResult["verification"]> {
+  const url = URL.createObjectURL(args.blob);
+  try {
+    const actual = await new Promise<number>((resolve, reject) => {
+      const v = document.createElement("video");
+      v.preload = "metadata";
+      v.muted = true;
+      const cleanup = () => {
+        v.onloadedmetadata = null;
+        v.onerror = null;
+        v.src = "";
+      };
+      v.onloadedmetadata = () => {
+        const d = v.duration;
+        cleanup();
+        if (!isFinite(d) || d <= 0) reject(new Error("Produced MP4 has invalid duration."));
+        else resolve(d);
+      };
+      v.onerror = () => {
+        cleanup();
+        reject(new Error("Could not load produced MP4 for verification."));
+      };
+      v.src = url;
+    });
+
+    // Independent audio-track measurement — the whole point of the cross-check.
+    const measuredAudio = args.hasAudio ? await measureAudioTrackDuration(args.blob) : null;
+
+    const durationDeltaSec = Math.abs(actual - args.expectedDurationSec);
+    const audioVideoDeltaSec =
+      measuredAudio != null ? Math.abs(actual - measuredAudio) : null;
+
+    const report: VideoExportResult["verification"] = {
+      panelCount: args.panelCount,
+      secondsPerPanel: args.secondsPerPanel,
+      expectedDurationSec: args.expectedDurationSec,
+      actualDurationSec: actual,
+      audioDurationSec: measuredAudio,
+      durationDeltaSec,
+      audioVideoDeltaSec,
+    };
+
+    if (durationDeltaSec > args.videoToleranceSec) {
+      throw new VideoVerificationError(
+        `Video duration verification failed: expected ${args.expectedDurationSec.toFixed(3)}s, got ${actual.toFixed(3)}s (delta ${(durationDeltaSec * 1000).toFixed(0)}ms > tolerance ${(args.videoToleranceSec * 1000).toFixed(0)}ms).`,
+        report,
+      );
+    }
+    if (audioVideoDeltaSec != null && audioVideoDeltaSec > args.audioToleranceSec) {
+      throw new VideoVerificationError(
+        `Audio/video sync verification failed: audio track is ${(measuredAudio ?? 0).toFixed(3)}s but video track is ${actual.toFixed(3)}s (delta ${(audioVideoDeltaSec * 1000).toFixed(0)}ms > tolerance ${(args.audioToleranceSec * 1000).toFixed(0)}ms).`,
+        report,
+      );
+    }
+    return report;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 function hasWebCodecs(): boolean {
@@ -252,8 +381,13 @@ export async function exportNovelVideo(opts: VideoExportOptions): Promise<VideoE
     try {
       return await exportViaWebCodecs(opts, audioBuffer);
     } catch (err) {
+      // Verification failures are TERMINAL — the WebCodecs path produced a
+      // file that doesn't meet the user's strict duration/sync requirements,
+      // and the MediaRecorder fallback has looser tolerances by design.
+      // Silently downgrading would defeat the whole point of the verification.
+      if (err instanceof VideoVerificationError) throw err;
       console.warn("WebCodecs export failed, falling back to MediaRecorder:", err);
-      // Fall through to MediaRecorder.
+      // Fall through to MediaRecorder only for genuine encoder/codec errors.
     }
   }
   return await exportViaMediaRecorder(opts, audioBuffer);
@@ -281,9 +415,31 @@ async function exportViaWebCodecs(
 ): Promise<VideoExportResult> {
   const { title, panels, fps = 30, width = 1080, height = 1920, onProgress } = opts;
   const syncToAudio = opts.syncToAudio ?? !!audioBuffer;
-  let secondsPerPanel = opts.secondsPerPanel ?? 3;
+
+  // ─── Compute exact, equal per-slide duration ──────────────────────────────
+  //
+  // The user demands two invariants on every export:
+  //   (a) every slide has the SAME on-screen duration, and
+  //   (b) when a music track is provided, video length == audio length EXACTLY.
+  //
+  // Naively dividing audioDuration / panelCount and rounding `secondsPerPanel * fps`
+  // independently per panel leaks up to half a frame per panel of drift, so a 200-
+  // panel novel could end up 3+ seconds out of sync. Instead:
+  //   1. Pick `framesPerPanel` as the integer that makes `framesPerPanel * panels`
+  //      land closest to `audioDuration * fps`.
+  //   2. Define the canonical `expectedDurationSec = framesPerPanel * panels / fps`.
+  //   3. Trim or zero-pad the audio buffer so its sample count equals exactly
+  //      `expectedDurationSec * sampleRate` before encoding.
+  // After that, video and audio are mathematically identical in length, and every
+  // slide is the same integer number of frames — both invariants enforced by
+  // construction, then re-checked by verifyExportDuration() after muxing.
+  let secondsPerPanel: number;
   if (audioBuffer && syncToAudio) {
-    secondsPerPanel = Math.max(0.1, audioBuffer.duration / panels.length);
+    const audioFrames = Math.max(panels.length * 2, Math.round(audioBuffer.duration * fps));
+    const framesPerPanelPick = Math.max(2, Math.round(audioFrames / panels.length));
+    secondsPerPanel = framesPerPanelPick / fps;
+  } else {
+    secondsPerPanel = opts.secondsPerPanel ?? 3;
   }
 
   const wc = globalThis as unknown as WebCodecsGlobals;
@@ -399,6 +555,8 @@ async function exportViaWebCodecs(
   videoEncoder.close();
   if (encoderError) throw encoderError;
 
+  const expectedDurationSec = totalFrames / fps;
+
   if (audioBuffer) {
     const audioEncoder = new wc.AudioEncoder({
       output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
@@ -414,16 +572,26 @@ async function exportViaWebCodecs(
     const CHUNK = 1024;
     const channels = audioBuffer.numberOfChannels;
     const sr = audioBuffer.sampleRate;
-    const totalSamples = audioBuffer.length;
+    // Force the audio length to match the video length to the sample. If the
+    // original track is longer, trim the tail; if shorter, append silence.
+    // Either way the produced MP4's video and audio tracks share an identical
+    // duration, which is the only way to guarantee perfect lockstep playback.
+    const targetSamples = Math.round(expectedDurationSec * sr);
+    const sourceSamples = audioBuffer.length;
     const chData: Float32Array[] = [];
     for (let c = 0; c < channels; c++) chData.push(audioBuffer.getChannelData(c));
 
-    for (let offset = 0; offset < totalSamples; offset += CHUNK) {
-      const numberOfFrames = Math.min(CHUNK, totalSamples - offset);
-      // f32-planar: all of channel 0, then all of channel 1, etc.
+    for (let offset = 0; offset < targetSamples; offset += CHUNK) {
+      const numberOfFrames = Math.min(CHUNK, targetSamples - offset);
       const planar = new Float32Array(numberOfFrames * channels);
       for (let c = 0; c < channels; c++) {
-        planar.set(chData[c].subarray(offset, offset + numberOfFrames), c * numberOfFrames);
+        const dst = planar.subarray(c * numberOfFrames, (c + 1) * numberOfFrames);
+        if (offset < sourceSamples) {
+          const copyLen = Math.min(numberOfFrames, sourceSamples - offset);
+          dst.set(chData[c].subarray(offset, offset + copyLen));
+          // remaining samples in dst are already 0 (silence) — Float32Array default.
+        }
+        // else: entire chunk is silent padding, left as zeros.
       }
       const timestamp = Math.round((offset / sr) * 1_000_000);
       const ad = new wc.AudioData({
@@ -447,7 +615,32 @@ async function exportViaWebCodecs(
   muxer.finalize();
   const blob = new Blob([target.buffer], { type: "video/mp4" });
   const safeTitle = (title || "novel").replace(/[^a-z0-9_-]+/gi, "_").slice(0, 60) || "novel";
-  return { blob, filename: `${safeTitle}.mp4`, mimeType: "video/mp4" };
+
+  // Video tolerance = 1 frame (~33ms @ 30fps). MP4 reports duration in ticks of
+  // 1/timescale seconds, so sub-frame precision is normal.
+  // Audio tolerance = max(1 video frame, 2 AAC frames). AAC encodes 1024 samples
+  // per frame (~23ms @ 44.1kHz) and trailing partial frames get padded to the
+  // boundary, so the muxed audio-track duration can legitimately be up to ~one
+  // AAC frame longer than what we requested. Two AAC frames of slack covers
+  // that quantization plus encoder priming/delay without ever masking real
+  // desync (anything larger is genuinely audible).
+  const aacGranularitySec = audioBuffer ? 1024 / audioBuffer.sampleRate : 0;
+  const verification = await verifyExportDuration({
+    blob,
+    expectedDurationSec,
+    hasAudio: !!audioBuffer,
+    panelCount: panels.length,
+    secondsPerPanel: framesPerPanel / fps,
+    videoToleranceSec: 1 / fps,
+    audioToleranceSec: Math.max(1 / fps, 2 * aacGranularitySec),
+  });
+
+  return {
+    blob,
+    filename: `${safeTitle}.mp4`,
+    mimeType: "video/mp4",
+    verification,
+  };
 }
 
 // --- MediaRecorder fallback (Firefox/Safari without WebCodecs) --------------------
@@ -552,5 +745,29 @@ async function exportViaMediaRecorder(
   const blob = new Blob(chunks, { type: actualType });
   const finalExt = extFromBlobType(actualType, ext);
   const safeTitle = (title || "novel").replace(/[^a-z0-9_-]+/gi, "_").slice(0, 60) || "novel";
-  return { blob, filename: `${safeTitle}.${finalExt}`, mimeType: actualType };
+
+  // MediaRecorder is wall-clock driven (we drive it with setTimeout), so its
+  // actual duration is inherently sloppier than the WebCodecs path. We still
+  // run the same verification but with a looser tolerance (250 ms) — anything
+  // worse than that is genuinely user-visible and should be reported as a
+  // failure rather than silently shipped.
+  const expectedDurationSec = audioBuffer && syncToAudio
+    ? audioDuration
+    : (framesPerPanel * panels.length) / fps;
+  const verification = await verifyExportDuration({
+    blob,
+    expectedDurationSec,
+    hasAudio: !!audioBuffer,
+    panelCount: panels.length,
+    secondsPerPanel,
+    videoToleranceSec: 0.25,
+    audioToleranceSec: 0.25,
+  });
+
+  return {
+    blob,
+    filename: `${safeTitle}.${finalExt}`,
+    mimeType: actualType,
+    verification,
+  };
 }

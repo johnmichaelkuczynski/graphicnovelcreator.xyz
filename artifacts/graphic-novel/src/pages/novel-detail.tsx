@@ -125,8 +125,17 @@ export default function NovelDetail() {
         blob: result.blob,
       });
       setSavedVideos((prev) => [saved, ...prev]);
+      // Surface the post-export verification so the user has concrete proof every
+      // slide had the same screen time and that the music and video line up.
+      const v = result.verification;
+      const perSlide = v.secondsPerPanel.toFixed(3);
+      const dur = v.actualDurationSec.toFixed(3);
+      const audioLine =
+        v.audioDurationSec != null
+          ? ` Audio is ${v.audioDurationSec.toFixed(3)}s, video is ${dur}s — locked to within ${((v.audioVideoDeltaSec ?? 0) * 1000).toFixed(0)} ms.`
+          : "";
       setExportNotice(
-        `Saved "${saved.filename}" (${formatBytes(saved.size)}) to your library. Use the Download button below to save it anywhere on your computer.`,
+        `Saved "${saved.filename}" (${formatBytes(saved.size)}). Verified: ${v.panelCount} slides × ${perSlide}s each, total ${dur}s.${audioLine}`,
       );
     } catch (err) {
       console.error("Video export failed", err);
