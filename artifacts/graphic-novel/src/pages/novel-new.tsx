@@ -38,6 +38,7 @@ export default function NovelNew() {
   const createNovel = useCreateNovel();
 
   const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>(() => popRefinedRefs());
+  const [lengthUnit, setLengthUnit] = useState<"panels" | "seconds">("panels");
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -164,25 +165,75 @@ export default function NovelNew() {
             <FormField
               control={form.control}
               name="panelCount"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="font-bold uppercase flex justify-between">
-                    <span>Panel Count</span>
-                    <span className="text-primary">{field.value} Panels</span>
-                  </FormLabel>
-                  <FormControl>
-                    <Slider
-                      min={1}
-                      max={50}
-                      step={1}
-                      value={[field.value]}
-                      onValueChange={(vals) => field.onChange(vals[0])}
-                      className="py-4"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+              render={({ field }) => {
+                const SEC_PER_PANEL = 3;
+                const seconds = field.value * SEC_PER_PANEL;
+                const mins = Math.floor(seconds / 60);
+                const secs = seconds % 60;
+                const durationLabel = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+                return (
+                  <FormItem>
+                    <FormLabel className="font-bold uppercase flex justify-between items-center">
+                      <span>Length</span>
+                      <div className="flex gap-2 text-xs font-mono normal-case">
+                        <button
+                          type="button"
+                          onClick={() => setLengthUnit("panels")}
+                          className={`px-2 py-1 border-2 ${lengthUnit === "panels" ? "bg-foreground text-background border-foreground" : "border-border"}`}
+                        >
+                          Panels
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLengthUnit("seconds")}
+                          className={`px-2 py-1 border-2 ${lengthUnit === "seconds" ? "bg-foreground text-background border-foreground" : "border-border"}`}
+                        >
+                          MP4 Duration
+                        </button>
+                      </div>
+                    </FormLabel>
+                    {lengthUnit === "panels" ? (
+                      <>
+                        <div className="flex justify-between font-mono text-sm">
+                          <span className="text-primary font-bold">{field.value} Panels</span>
+                          <span className="text-muted-foreground">≈ {durationLabel} MP4</span>
+                        </div>
+                        <FormControl>
+                          <Slider
+                            min={1}
+                            max={50}
+                            step={1}
+                            value={[field.value]}
+                            onValueChange={(vals) => field.onChange(vals[0])}
+                            className="py-4"
+                          />
+                        </FormControl>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex justify-between font-mono text-sm">
+                          <span className="text-primary font-bold">{durationLabel} MP4</span>
+                          <span className="text-muted-foreground">= {field.value} panels @ {SEC_PER_PANEL}s each</span>
+                        </div>
+                        <FormControl>
+                          <Slider
+                            min={SEC_PER_PANEL}
+                            max={50 * SEC_PER_PANEL}
+                            step={SEC_PER_PANEL}
+                            value={[seconds]}
+                            onValueChange={(vals) => field.onChange(Math.max(1, Math.round((vals[0] ?? SEC_PER_PANEL) / SEC_PER_PANEL)))}
+                            className="py-4"
+                          />
+                        </FormControl>
+                        <FormDescription className="font-mono text-xs">
+                          MP4 export plays each panel for {SEC_PER_PANEL}s. Range: {SEC_PER_PANEL}s – {50 * SEC_PER_PANEL / 60}m.
+                        </FormDescription>
+                      </>
+                    )}
+                    <FormMessage />
+                  </FormItem>
+                );
+              }}
             />
 
             <div className="space-y-6">
