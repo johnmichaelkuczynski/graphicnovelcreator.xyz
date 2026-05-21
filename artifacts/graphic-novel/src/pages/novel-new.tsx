@@ -199,7 +199,7 @@ export default function NovelNew() {
               <h3 className="text-xl font-bold font-serif uppercase">Soundtrack (Optional)</h3>
             </div>
             <p className="font-mono text-sm text-muted-foreground">
-              Upload an MP3 and the exported MP4 will exactly match its length, with the audio muxed in.
+              Upload an MP3 or WAV and the exported MP4 will exactly match its length, with the audio muxed in.
               Perfect for turning a music track into a TikTok-ready video. Panel count auto-adjusts to fit.
             </p>
             {audioTrack ? (
@@ -222,7 +222,7 @@ export default function NovelNew() {
             ) : (
               <Input
                 type="file"
-                accept="audio/mpeg,audio/mp3,audio/*"
+                accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/wave,audio/*,.mp3,.wav"
                 onChange={(e) => handleAudioFile(e.target.files?.[0] ?? null)}
                 className="font-mono"
               />
