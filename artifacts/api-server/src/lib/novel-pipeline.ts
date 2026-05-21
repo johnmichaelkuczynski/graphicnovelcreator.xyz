@@ -189,7 +189,9 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
     // from the same point in latent space for every panel — keeps style, palette,
     // and character look consistent across the entire book. Derived deterministically
     // from the novelId so re-runs of the same novel are reproducible.
-    const novelSeed = ((novelId * 2654435761) >>> 0) % 2_000_000_000;
+    // Venice rejects seeds > 999_999_999, so we must clamp the per-novel deterministic seed
+    // below that ceiling. Keep it >0 so 0 doesn't accidentally disable seeding upstream.
+    const novelSeed = (((novelId * 2654435761) >>> 0) % 999_999_999) + 1;
 
     for (const row of inserted.sort((a, b) => a.idx - b.idx)) {
       const plan = plans[row.idx];
