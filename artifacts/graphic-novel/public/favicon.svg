@@ -1,3 +1,19 @@
-<svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect width="180" height="180" rx="36" fill="#FF3C00"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#FF3C00"/>
+  <g stroke="#0a0a0a" stroke-width="14" stroke-linejoin="round">
+    <rect x="64"  y="64"  width="170" height="170" fill="#FFE8DC"/>
+    <rect x="278" y="64"  width="170" height="170" fill="#0a0a0a"/>
+    <rect x="64"  y="278" width="170" height="170" fill="#0a0a0a"/>
+    <rect x="278" y="278" width="170" height="170" fill="#FFE8DC"/>
+  </g>
+  <g fill="#0a0a0a" font-family="Impact, 'Arial Black', sans-serif" font-weight="900" text-anchor="middle">
+    <text x="149" y="178" font-size="140">G</text>
+  </g>
+  <g fill="#FFE8DC" font-family="Impact, 'Arial Black', sans-serif" font-weight="900" text-anchor="middle">
+    <text x="363" y="178" font-size="140">N</text>
+  </g>
+  <circle cx="149" cy="363" r="48" fill="#FF3C00" stroke="#FFE8DC" stroke-width="10"/>
+  <g fill="#FF3C00" stroke="#0a0a0a" stroke-width="10" stroke-linejoin="round">
+    <polygon points="320,330 410,330 430,400 340,420 300,395"/>
+  </g>
 </svg>
