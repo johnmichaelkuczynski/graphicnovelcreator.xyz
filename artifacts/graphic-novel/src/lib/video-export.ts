@@ -18,12 +18,15 @@ export interface VideoExportOptions {
   syncToAudio?: boolean;
 }
 
-// When no audio is attached we prefer MP4 (TikTok-friendly). When audio IS attached we prefer
-// WebM/Opus because Chromium's MediaRecorder MP4+AAC support is inconsistent — some builds
-// silently drop the audio track. WebM with Opus is universally reliable for audio muxing, and
-// we expose the actual container via the chosen file extension after recording.
+// ALWAYS prefer MP4 — TikTok, iOS Photos, Premiere, every social platform wants MP4.
+// Modern Chromium (>= ~125) supports H.264 + AAC muxed by MediaRecorder reliably, including
+// with audio tracks. WebM is only a last-resort fallback for browsers that simply cannot
+// produce MP4 (older Firefox builds). The user-visible file extension always reflects the
+// actual blob type after recording, so nothing lies about its container.
 const MIME_CANDIDATES_VIDEO_ONLY = [
   "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+  "video/mp4;codecs=avc1.640028,mp4a.40.2",
+  "video/mp4;codecs=avc1,mp4a.40.2",
   "video/mp4;codecs=avc1",
   "video/mp4",
   "video/webm;codecs=vp9,opus",
@@ -31,13 +34,14 @@ const MIME_CANDIDATES_VIDEO_ONLY = [
   "video/webm",
 ];
 const MIME_CANDIDATES_WITH_AUDIO = [
+  "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+  "video/mp4;codecs=avc1.640028,mp4a.40.2",
+  "video/mp4;codecs=avc1,mp4a.40.2",
+  "video/mp4;codecs=h264,aac",
+  "video/mp4",
   "video/webm;codecs=vp9,opus",
   "video/webm;codecs=vp8,opus",
-  "video/webm;codecs=vp9",
-  "video/webm;codecs=vp8",
   "video/webm",
-  "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
-  "video/mp4",
 ];
 
 function pickMime(withAudio: boolean): { mime: string; ext: string } {
