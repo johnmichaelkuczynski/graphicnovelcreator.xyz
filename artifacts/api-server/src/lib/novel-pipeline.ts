@@ -185,6 +185,12 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
     // but the medium / realism / look are preserved.
     const firstRef = refs.find((r) => r.dataUrl && r.dataUrl.startsWith("data:"));
 
+    // Lock a single random seed for the whole novel so the diffusion model samples
+    // from the same point in latent space for every panel — keeps style, palette,
+    // and character look consistent across the entire book. Derived deterministically
+    // from the novelId so re-runs of the same novel are reproducible.
+    const novelSeed = ((novelId * 2654435761) >>> 0) % 2_000_000_000;
+
     for (const row of inserted.sort((a, b) => a.idx - b.idx)) {
       const plan = plans[row.idx];
       await db
@@ -196,6 +202,7 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
           prompt: `${refStyleLead}${userStyleLead}${fallbackStyle}${plan.imagePrompt}. No text, no captions, no speech bubbles, no panel borders inside the image.${specSuffix}`,
           referenceImageDataUrl: firstRef?.dataUrl,
           referenceStrength: 0.72,
+          seed: novelSeed,
         });
         await db
           .update(panelsTable)

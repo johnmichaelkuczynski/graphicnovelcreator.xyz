@@ -247,6 +247,7 @@ export async function generateImage(opts: {
   width?: number;
   height?: number;
   modelOverride?: string;
+  seed?: number;
   _modelIdx?: number;
 }): Promise<string> {
   if (!process.env.VENICE_API_KEY) throw new Error("VENICE_API_KEY not set");
@@ -268,6 +269,9 @@ export async function generateImage(opts: {
     hide_watermark: true,
     return_binary: false,
   };
+  if (typeof opts.seed === "number") {
+    body.seed = opts.seed;
+  }
   if (opts.referenceImageDataUrl) {
     const { base64 } = parseDataUrl(opts.referenceImageDataUrl);
     body.image = base64;
