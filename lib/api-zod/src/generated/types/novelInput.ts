@@ -13,7 +13,7 @@ export interface NovelInput {
   sourceText: string;
   /**
      * @minimum 1
-     * @maximum 50
+     * @maximum 200
      */
   panelCount: number;
   /** User's free-form direction (style, characters, tone) */

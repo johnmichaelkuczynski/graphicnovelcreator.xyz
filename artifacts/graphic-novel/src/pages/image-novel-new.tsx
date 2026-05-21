@@ -25,7 +25,7 @@ const formSchema = z.object({
   sourceText: z.string().min(1, "Description is required"),
   specifications: z.string(),
   artStyle: z.string(),
-  panelCount: z.number().min(1).max(50),
+  panelCount: z.number().min(1).max(200),
   textModel: z.string().min(1, "Model is required"),
   explicit: z.boolean().default(false),
 });
@@ -170,7 +170,7 @@ export default function ImageNovelNew() {
                   <FormControl>
                     <Slider
                       min={1}
-                      max={50}
+                      max={200}
                       step={1}
                       value={[field.value]}
                       onValueChange={(vals) => field.onChange(vals[0])}
