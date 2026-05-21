@@ -152,7 +152,13 @@ function drawFrame(
   ctx.fillText(`${panelIdx + 1} / ${totalPanels}`, pad, H - pad * 0.8);
 }
 
-export async function exportNovelVideo(opts: VideoExportOptions): Promise<void> {
+export interface VideoExportResult {
+  blob: Blob;
+  filename: string;
+  mimeType: string;
+}
+
+export async function exportNovelVideo(opts: VideoExportOptions): Promise<VideoExportResult> {
   const {
     title,
     panels,
@@ -266,13 +272,10 @@ export async function exportNovelVideo(opts: VideoExportOptions): Promise<void> 
   const actualType = chunks[0]?.type || mime || "video/webm";
   const blob = new Blob(chunks, { type: actualType });
   const finalExt = extFromBlobType(actualType, ext);
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
   const safeTitle = (title || "novel").replace(/[^a-z0-9_-]+/gi, "_").slice(0, 60) || "novel";
-  a.download = `${safeTitle}.${finalExt}`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const filename = `${safeTitle}.${finalExt}`;
+  // Caller decides what to do with the blob (persist to IndexedDB, prompt save dialog, etc.)
+  // No more silent <a download> — the previous behavior dumped files into the OS Downloads
+  // folder with no in-app trace, which left users wondering where the export went.
+  return { blob, filename, mimeType: actualType };
 }

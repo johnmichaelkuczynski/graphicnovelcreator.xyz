@@ -8,6 +8,8 @@ import { format } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useState } from "react";
 import { exportNovelVideo } from "@/lib/video-export";
+import { saveVideo, listVideosForNovel, deleteVideo, downloadVideo, formatBytes, type SavedVideo } from "@/lib/video-storage";
+import { Download, Trash2, FileVideo } from "lucide-react";
 import {
   takePendingAudio,
   setNovelAudio,
@@ -26,8 +28,16 @@ export default function NovelDetail() {
   const [videoProgress, setVideoProgress] = useState(0);
   const [audioTrack, setAudioTrackState] = useState<AudioTrack | null>(null);
   const [audioError, setAudioError] = useState("");
+  const [savedVideos, setSavedVideos] = useState<SavedVideo[]>([]);
+  const [exportNotice, setExportNotice] = useState("");
   const queryClient = useQueryClient();
   const regenerate = useRegenerateNovel();
+
+  // Load any previously-saved exports for this novel out of IndexedDB.
+  useEffect(() => {
+    if (!id) return;
+    listVideosForNovel(Number(id)).then(setSavedVideos).catch(() => setSavedVideos([]));
+  }, [id]);
 
   const handleRegenerate = () => {
     if (!id) return;
@@ -95,8 +105,9 @@ export default function NovelDetail() {
     if (!novel) return;
     setExportingVideo(true);
     setVideoProgress(0);
+    setExportNotice("");
     try {
-      await exportNovelVideo({
+      const result = await exportNovelVideo({
         title: novel.title || "Untitled Issue",
         panels: novel.panels
           .filter((p) => p.status === "done" && p.imageDataUrl)
@@ -106,6 +117,17 @@ export default function NovelDetail() {
         syncToAudio: !!audioTrack,
         onProgress: (p) => setVideoProgress(p),
       });
+      // Persist to IndexedDB so it survives reloads and stays visible in the Saved
+      // Exports panel below — no more silent disappearance into the OS Downloads folder.
+      const saved = await saveVideo({
+        novelId: Number(id),
+        filename: result.filename,
+        blob: result.blob,
+      });
+      setSavedVideos((prev) => [saved, ...prev]);
+      setExportNotice(
+        `Saved "${saved.filename}" (${formatBytes(saved.size)}) to your library. Use the Download button below to save it anywhere on your computer.`,
+      );
     } catch (err) {
       console.error("Video export failed", err);
       alert("Video export failed: " + (err instanceof Error ? err.message : String(err)));
@@ -113,6 +135,21 @@ export default function NovelDetail() {
       setExportingVideo(false);
       setVideoProgress(0);
     }
+  };
+
+  const handleDownloadSaved = async (v: SavedVideo) => {
+    try {
+      const result = await downloadVideo(v);
+      if (result === "saved") setExportNotice(`Saved "${v.filename}" to your chosen location.`);
+      else if (result === "downloaded") setExportNotice(`Downloading "${v.filename}" via your browser — check your Downloads folder.`);
+    } catch (err) {
+      alert("Download failed: " + (err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  const handleDeleteSaved = async (v: SavedVideo) => {
+    await deleteVideo(v.id);
+    setSavedVideos((prev) => prev.filter((x) => x.id !== v.id));
   };
 
   if (isLoading) {
@@ -236,6 +273,58 @@ export default function NovelDetail() {
           <AlertCircle className="w-12 h-12 text-destructive mx-auto" />
           <h3 className="text-2xl font-bold font-serif uppercase text-destructive">Generation Failed</h3>
           <p className="font-mono text-sm">{novel.error || "An unknown error occurred during generation."}</p>
+        </div>
+      )}
+
+      {/* Saved video exports — kept in the browser's IndexedDB so they survive reloads. */}
+      {(savedVideos.length > 0 || exportNotice) && (
+        <div className="print:hidden mb-16 border-4 border-border p-6 space-y-4 bg-card">
+          <div className="flex items-center gap-3">
+            <FileVideo className="w-6 h-6" />
+            <h3 className="text-xl font-bold font-serif uppercase">Saved Exports</h3>
+            <span className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
+              ({savedVideos.length} stored in this browser)
+            </span>
+          </div>
+          {exportNotice && (
+            <div className="border-2 border-primary bg-primary/10 p-3 font-mono text-sm">
+              {exportNotice}
+            </div>
+          )}
+          {savedVideos.length === 0 ? (
+            <p className="font-mono text-sm text-muted-foreground">
+              No saved exports yet — hit Export Video to render one.
+            </p>
+          ) : (
+            <ul className="divide-y-2 divide-border border-2 border-border">
+              {savedVideos.map((v) => (
+                <li key={v.id} className="flex items-center gap-4 p-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold truncate">{v.filename}</div>
+                    <div className="font-mono text-xs text-muted-foreground">
+                      {formatBytes(v.size)} · {v.mimeType} · {format(new Date(v.createdAt), 'PP p')}
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => handleDownloadSaved(v)}
+                    className="font-mono uppercase tracking-wider"
+                  >
+                    <Download className="w-4 h-4 mr-2" /> Download
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleDeleteSaved(v)}
+                    aria-label="Delete saved video"
+                    title="Delete saved video"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
