@@ -202,8 +202,17 @@ export async function exportNovelVideo(opts: VideoExportOptions): Promise<VideoE
   drawFrame(ctx, width, height, images[0], panels[0].caption, 0, panels.length);
 
   // Build the combined media stream: canvas video + (optionally) decoded audio.
-  const videoStream = canvas.captureStream(fps);
-  const tracks: MediaStreamTrack[] = [...videoStream.getVideoTracks()];
+  // We use captureStream(0) instead of captureStream(fps) so the browser does NOT
+  // auto-poll the canvas on its own timer. Auto-polling causes a fatal failure mode
+  // with the MP4/H.264 encoder: when the canvas isn't repainted between auto-captures,
+  // Chromium fails to emit keyframes, producing a video file with valid audio but
+  // entirely BLACK frames (the WebM/VP9 encoder tolerated this; H.264 does not).
+  // With (0) we push every frame ourselves via track.requestFrame() right after
+  // drawing, so the encoder always sees a fresh, timestamped, dirty canvas.
+  const videoStream = canvas.captureStream(0);
+  const videoTrack = videoStream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined;
+  if (!videoTrack) throw new Error("Could not create video track from canvas.");
+  const tracks: MediaStreamTrack[] = [videoTrack];
   let audioSource: AudioBufferSourceNode | null = null;
   let audioDest: MediaStreamAudioDestinationNode | null = null;
   if (audioCtx && audioBuffer) {
@@ -237,10 +246,21 @@ export async function exportNovelVideo(opts: VideoExportOptions): Promise<VideoE
   const totalFrames = framesPerPanel * panels.length;
   const frameInterval = 1000 / fps;
 
+  // Seed the encoder with a couple of identical frames so the first keyframe lands
+  // before any audio samples — some Chromium builds drop the first ~50ms otherwise.
+  drawFrame(ctx, width, height, images[0], panels[0].caption, 0, panels.length);
+  if (typeof videoTrack.requestFrame === "function") videoTrack.requestFrame();
+  await new Promise((r) => setTimeout(r, frameInterval));
+
   let frameCount = 0;
   for (let i = 0; i < panels.length; i++) {
-    drawFrame(ctx, width, height, images[i], panels[i].caption, i, panels.length);
     for (let f = 0; f < framesPerPanel; f++) {
+      // Redraw every single frame even though the underlying image is unchanged.
+      // This marks the canvas dirty so the requestFrame() call below actually
+      // emits a new sample to the encoder; without it H.264 silently produces
+      // an all-black file when nothing repaints between captures.
+      drawFrame(ctx, width, height, images[i], panels[i].caption, i, panels.length);
+      if (typeof videoTrack.requestFrame === "function") videoTrack.requestFrame();
       await new Promise((r) => setTimeout(r, frameInterval));
       frameCount++;
       if (onProgress) onProgress(frameCount / totalFrames);
