@@ -199,16 +199,13 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
     const framingRule =
       " HARD COMPOSITION RULES (do not violate): WIDE SHOT or MEDIUM-WIDE SHOT only. The subject's ENTIRE head and FULL face must be visible with substantial empty space above the head. Frame from at least the waist up, preferably full body. NEVER a close-up. NEVER a portrait crop. NEVER let any part of the head, hair, or face touch or exceed the top edge of the image.";
 
-    // HARD RULE 2 (style): after panel 1 succeeds, use IT as the img2img reference for every
-    // subsequent panel. This is the only reliable way to lock style across a whole novel —
-    // text prompts and seeds alone are not sufficient because the model still drifts.
-    // styleAnchor starts as the user's uploaded reference (if any) and is overwritten by
-    // panel 1's actual output, which encodes the locked-in medium, palette, line quality,
-    // and character appearance.
+    // HARD RULE 2 (style): we WANT to anchor every panel to panel 1's output via img2img,
+    // but Venice's /image/generate currently rejects `image`+`strength` (see ai.ts note).
+    // Until they expose a supported img2img field again, generateImage() ignores these
+    // params and consistency relies on (1) a stable per-novel seed and (2) the style text
+    // baked into every prompt via refStyleLead/userStyleLead/fallbackStyle. We keep the
+    // anchor plumbing here so re-enabling img2img is a one-line change in ai.ts.
     let styleAnchor: string | undefined = firstRef?.dataUrl;
-    // First panel keeps higher strength (more freedom to interpret the prompt) when anchored
-    // to a user-uploaded reference; subsequent panels anchor to the first generated panel at
-    // low strength so style is preserved but the per-panel scene can still change.
     const FIRST_PANEL_STRENGTH = 0.6;
     const ANCHOR_STRENGTH = 0.35;
 

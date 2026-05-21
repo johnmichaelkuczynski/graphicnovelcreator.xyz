@@ -249,6 +249,7 @@ export async function generateImage(opts: {
   modelOverride?: string;
   seed?: number;
   _modelIdx?: number;
+  _retriedAfter429?: boolean;
 }): Promise<string> {
   if (!process.env.VENICE_API_KEY) throw new Error("VENICE_API_KEY not set");
   const modelIdx = opts._modelIdx ?? 0;
@@ -276,12 +277,17 @@ export async function generateImage(opts: {
   if (typeof opts.seed === "number") {
     body.seed = opts.seed;
   }
-  if (opts.referenceImageDataUrl) {
-    const { base64 } = parseDataUrl(opts.referenceImageDataUrl);
-    body.image = base64;
-    body.strength = opts.referenceStrength ?? 0.65;
-  }
-  logger.info({ model, hasRef: !!opts.referenceImageDataUrl }, "Venice image generate");
+  // NOTE: Venice's /image/generate endpoint stopped accepting `image` + `strength`
+  // for img2img (rejects with "Unrecognized key(s) in object"). Sending those keys
+  // anyway burned every retry and triggered Venice's 20-failures-in-a-row lockout
+  // (HTTP 429 for 30s), which killed every remaining panel in a novel. Until Venice
+  // documents a replacement, we rely purely on a stable `seed` plus the text-level
+  // style description for cross-panel consistency. `referenceImageDataUrl` is
+  // accepted in the signature for forward compatibility but currently ignored.
+  void opts.referenceImageDataUrl;
+  void opts.referenceStrength;
+
+  logger.info({ model }, "Venice image generate");
   const res = await fetch(`${VENICE_BASE}/image/generate`, {
     method: "POST",
     headers: {
@@ -292,15 +298,19 @@ export async function generateImage(opts: {
   });
   if (!res.ok) {
     const errText = await res.text();
-    // 1) If img2img failed (model may not support `image`+`strength`), retry text-only on same model.
-    if (opts.referenceImageDataUrl) {
-      logger.warn({ model, status: res.status, errText: errText.slice(0, 300) }, "Venice img2img failed; retrying text-only");
-      return generateImage({ ...opts, referenceImageDataUrl: undefined });
+    // 429 = Venice rate-limited us. Wait the suggested cooldown and try once more
+    // on the same model. Without this, every remaining panel in a 200-panel novel
+    // would fail instantly the moment we trip the limiter.
+    if (res.status === 429 && !opts._retriedAfter429) {
+      const cooldownMs = 32_000; // Venice asks for 30s; pad slightly.
+      logger.warn({ model, cooldownMs }, "Venice rate-limited; backing off");
+      await new Promise((r) => setTimeout(r, cooldownMs));
+      return generateImage({ ...opts, _retriedAfter429: true });
     }
-    // 2) Otherwise, fall through to the next model in the preference list (e.g. lustify→flux→sd35).
+    // Otherwise, fall through to the next model in the preference list (e.g. lustify→flux→sd35).
     if (!opts.modelOverride && modelIdx + 1 < VENICE_IMAGE_MODELS.length) {
       logger.warn({ model, status: res.status, errText: errText.slice(0, 300) }, "Venice model failed; trying next");
-      return generateImage({ ...opts, _modelIdx: modelIdx + 1 });
+      return generateImage({ ...opts, _modelIdx: modelIdx + 1, _retriedAfter429: false });
     }
     throw new Error(`Venice image error ${res.status}: ${errText}`);
   }
