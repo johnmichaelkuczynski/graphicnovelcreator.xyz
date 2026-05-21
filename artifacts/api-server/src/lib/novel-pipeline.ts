@@ -59,7 +59,9 @@ ${opts.referenceDescription}
 ╚══════════════════════════════════════════════════════╝
 ${opts.specifications.trim()}
 
-These directives OVERRIDE anything implied by the source text. If the source text describes a character as male but the author directs that all characters be female, the character IS female. If the source text uses a name like "John" but the author directs the cast be female, rename the character (e.g. "Joan") and depict her as a woman. Every caption AND every imagePrompt must reflect these directives verbatim. Do not soften, paraphrase, partially apply, or ignore any directive. A panel that violates a directive is a failed panel.`
+These directives OVERRIDE anything implied by the source text. When a directive contradicts the source (e.g. directive says "set in 1920s Tokyo" but the source says "modern New York"; directive specifies a character's gender, age, or appearance differently than the source; directive specifies an art style or mood the source doesn't imply), the directive WINS — rewrite the affected captions and imagePrompts accordingly. Every caption AND every imagePrompt must reflect these directives verbatim. Do not soften, paraphrase, partially apply, or ignore any directive. A panel that violates a directive is a failed panel.
+
+CRITICAL: When the author has NOT specified a gender, age, or appearance for a character, do NOT default to any particular gender, age, or appearance — follow what the source text actually says, and vary realistically when the source doesn't specify. Do not make every character female (or every character male) unless the source or the directives explicitly call for that.`
     : "";
 
   const system = `You are a senior graphic novel storyboard editor. You translate prose into a panel-by-panel comic script. You return ONLY JSON.

@@ -231,12 +231,19 @@ If multiple references are given, describe each one in turn.`;
   return `Reference subjects to depict consistently in every relevant panel: ${images.map((i) => i.label).join(", ")}.`;
 }
 
-// Venice image model preference order. lustify-sdxl is uncensored and photoreal-leaning;
-// flux-dev-uncensored is high quality; venice-sd35 is the safe fallback. Override with
-// VENICE_IMAGE_MODEL env var if you want to pin a specific model.
+// Venice image model preference order.
+//   - flux-dev-uncensored: high quality AND gender-balanced training data — best default.
+//   - venice-sd35: safe, general-purpose, also gender-balanced.
+//   - lustify-sdxl: NSFW-tuned SDXL fine-tune. Training data is overwhelmingly
+//     female, so it regresses to women even on male-only prompts. ONLY use it
+//     when the user explicitly requests it via VENICE_IMAGE_MODEL, otherwise
+//     the whole novel ends up looking like a pin-up gallery regardless of the
+//     prompt. Kept as a last-resort fallback so callers that pinned it via
+//     `modelOverride` still work.
+// Override with VENICE_IMAGE_MODEL env var if you want to pin a specific model.
 const VENICE_IMAGE_MODELS = (process.env.VENICE_IMAGE_MODEL
   ? [process.env.VENICE_IMAGE_MODEL]
-  : ["lustify-sdxl", "flux-dev-uncensored", "venice-sd35"]) as string[];
+  : ["flux-dev-uncensored", "venice-sd35", "lustify-sdxl"]) as string[];
 
 export async function generateImage(opts: {
   prompt: string;
