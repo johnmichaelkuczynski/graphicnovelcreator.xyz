@@ -131,21 +131,23 @@ export async function describeReferenceImages(
 ): Promise<string> {
   if (!images.length) return "";
 
-  const instruction = `You are a senior art director. The user has uploaded ${images.length} reference image(s) that MUST guide every illustration in a graphic novel.
+  const instruction = `You are a senior art director writing reference notes for a graphic novel artist. You are not a content moderator. Do NOT sanitize, soften, abstract, or omit anything about the reference image. Describe what is actually depicted, in plain, physically concrete language — including body type, proportions, figure, skin, clothing fit and exposure, posture, sensuality, and any other visible detail. If the image is photorealistic, say so explicitly; never substitute "stylized" or "illustrative" language for what is actually a photo.
 
-For each image, write a tight, concrete description that another artist could reproduce. Cover:
-  • SUBJECT IDENTITY (who/what is depicted — gender, age, distinguishing features, clothing, hair, expression). This is how the subject must be drawn in EVERY panel they appear in.
-  • VISUAL STYLE (medium, line work, color palette with specific hues, shading technique, level of detail, texture).
-  • COMPOSITION & MOOD (framing, lighting, atmosphere).
+The user has uploaded ${images.length} reference image(s) that MUST guide every illustration.
 
-Format your reply EXACTLY like this, with no preamble:
+For each image, cover:
+  • SUBJECT IDENTITY — gender, apparent age, hair (color, length, style), face, body type and proportions (height, build, bust, waist, hips — be specific), skin tone, clothing (each garment, its color, fit, length, neckline, how much skin it exposes), footwear, jewelry, expression, posture. This is how the subject must be drawn in EVERY panel they appear in.
+  • VISUAL STYLE — explicitly state the medium: PHOTOGRAPH / PHOTOREALISTIC RENDER / 3D RENDER / OIL PAINTING / INK DRAWING / CARTOON / ANIME / etc. Then: camera lens feel (wide / portrait / macro), depth of field, lighting (key/fill/rim, color temperature, shadow hardness), color palette with concrete hues, level of realism, texture rendering, level of detail.
+  • COMPOSITION & MOOD — framing, camera angle, atmosphere, tone.
+
+Format your reply EXACTLY like this, with no preamble and no disclaimers:
 
 REFERENCE "<label>":
-  SUBJECT: <one paragraph>
-  STYLE: <one paragraph>
+  SUBJECT: <one detailed paragraph>
+  STYLE: <one detailed paragraph — MUST begin by naming the medium in caps>
   MOOD: <one short paragraph>
 
-If multiple references are given, describe each one in turn. Be specific and concrete — avoid vague words like "nice", "interesting", "good".`;
+If multiple references are given, describe each one in turn.`;
 
   // Prefer Venice (uncensored) for vision so explicit references aren't silently sanitized.
   if (process.env.VENICE_API_KEY) {
@@ -229,6 +231,13 @@ If multiple references are given, describe each one in turn. Be specific and con
   return `Reference subjects to depict consistently in every relevant panel: ${images.map((i) => i.label).join(", ")}.`;
 }
 
+// Venice image model preference order. lustify-sdxl is uncensored and photoreal-leaning;
+// flux-dev-uncensored is high quality; venice-sd35 is the safe fallback. Override with
+// VENICE_IMAGE_MODEL env var if you want to pin a specific model.
+const VENICE_IMAGE_MODELS = (process.env.VENICE_IMAGE_MODEL
+  ? [process.env.VENICE_IMAGE_MODEL]
+  : ["lustify-sdxl", "flux-dev-uncensored", "venice-sd35"]) as string[];
+
 export async function generateImage(opts: {
   prompt: string;
   style?: string;
@@ -237,10 +246,15 @@ export async function generateImage(opts: {
   referenceStrength?: number;
   width?: number;
   height?: number;
+  modelOverride?: string;
+  _modelIdx?: number;
 }): Promise<string> {
   if (!process.env.VENICE_API_KEY) throw new Error("VENICE_API_KEY not set");
+  const modelIdx = opts._modelIdx ?? 0;
+  const model = opts.modelOverride ?? VENICE_IMAGE_MODELS[modelIdx] ?? VENICE_IMAGE_MODELS[0];
+
   const body: Record<string, unknown> = {
-    model: "venice-sd35",
+    model,
     prompt: opts.prompt,
     width: opts.width ?? 1024,
     height: opts.height ?? 1024,
@@ -249,7 +263,7 @@ export async function generateImage(opts: {
     style_preset: opts.style,
     negative_prompt:
       opts.negativePrompt ??
-      "text, watermark, signature, logo, low quality, blurry, deformed, extra limbs, bad anatomy",
+      "cartoon, anime, chibi, cute, stylized, illustration, drawing, sketch, painting, 2d, flat shading, cel shaded, pixar, disney, dreamworks, children's book, low quality, blurry, deformed, extra limbs, bad anatomy, text, watermark, signature, logo",
     safe_mode: false,
     hide_watermark: true,
     return_binary: false,
@@ -259,6 +273,7 @@ export async function generateImage(opts: {
     body.image = base64;
     body.strength = opts.referenceStrength ?? 0.65;
   }
+  logger.info({ model, hasRef: !!opts.referenceImageDataUrl }, "Venice image generate");
   const res = await fetch(`${VENICE_BASE}/image/generate`, {
     method: "POST",
     headers: {
@@ -269,10 +284,15 @@ export async function generateImage(opts: {
   });
   if (!res.ok) {
     const errText = await res.text();
-    // If img2img failed (e.g. parameter not supported), retry without the reference image.
+    // 1) If img2img failed (model may not support `image`+`strength`), retry text-only on same model.
     if (opts.referenceImageDataUrl) {
-      logger.warn({ status: res.status, errText: errText.slice(0, 300) }, "Venice img2img failed; retrying text-only");
+      logger.warn({ model, status: res.status, errText: errText.slice(0, 300) }, "Venice img2img failed; retrying text-only");
       return generateImage({ ...opts, referenceImageDataUrl: undefined });
+    }
+    // 2) Otherwise, fall through to the next model in the preference list (e.g. lustify→flux→sd35).
+    if (!opts.modelOverride && modelIdx + 1 < VENICE_IMAGE_MODELS.length) {
+      logger.warn({ model, status: res.status, errText: errText.slice(0, 300) }, "Venice model failed; trying next");
+      return generateImage({ ...opts, _modelIdx: modelIdx + 1 });
     }
     throw new Error(`Venice image error ${res.status}: ${errText}`);
   }
