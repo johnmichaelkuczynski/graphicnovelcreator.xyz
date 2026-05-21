@@ -164,3 +164,18 @@ export interface Screenplay {
   createdAt: string;
 }
 
+export type RepairNovelBody = {
+  /** Free-form repair directive appended to each targeted panel's prompt. */
+  instructions?: string;
+};
+
+export type RepairNovel200ReasonsItem = {
+  idx: number;
+  reason: string;
+};
+
+export type RepairNovel200 = {
+  targetedPanels: number;
+  reasons: RepairNovel200ReasonsItem[];
+};
+

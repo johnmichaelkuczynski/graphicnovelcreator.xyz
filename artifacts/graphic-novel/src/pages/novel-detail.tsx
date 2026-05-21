@@ -1,7 +1,7 @@
 import { useLocation, useParams } from "wouter";
-import { useGetNovel, getGetNovelQueryKey, useRegenerateNovel } from "@workspace/api-client-react";
+import { useGetNovel, getGetNovelQueryKey, useRegenerateNovel, useRepairNovel } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Printer, Loader2, AlertCircle, Video, RotateCcw } from "lucide-react";
+import { ArrowLeft, Printer, Loader2, AlertCircle, Video, RotateCcw, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { format } from "date-fns";
@@ -32,6 +32,9 @@ export default function NovelDetail() {
   const [exportNotice, setExportNotice] = useState("");
   const queryClient = useQueryClient();
   const regenerate = useRegenerateNovel();
+  const repair = useRepairNovel();
+  const [repairInstructions, setRepairInstructions] = useState("");
+  const [repairNotice, setRepairNotice] = useState("");
 
   // Load any previously-saved exports for this novel out of IndexedDB.
   useEffect(() => {
@@ -51,6 +54,34 @@ export default function NovelDetail() {
           // panels disappear without waiting for the next refetch.
           queryClient.setQueryData(getGetNovelQueryKey(novelId), fresh);
           queryClient.invalidateQueries({ queryKey: getGetNovelQueryKey(novelId) });
+        },
+      },
+    );
+  };
+
+  // Surgical repair: server scans every panel for the blank-image failure mode
+  // and re-rolls just those (plus any panel marked failed). Optional free-form
+  // instructions get appended to the prompt for the panels being redone.
+  const handleRepair = () => {
+    if (!id) return;
+    const novelId = Number(id);
+    setRepairNotice("");
+    repair.mutate(
+      { id: novelId, data: { instructions: repairInstructions.trim() || undefined } },
+      {
+        onSuccess: (result) => {
+          if (result.targetedPanels === 0) {
+            setRepairNotice("No bad panels found — everything checked out clean.");
+          } else {
+            setRepairNotice(
+              `Re-rolling ${result.targetedPanels} panel${result.targetedPanels === 1 ? "" : "s"}: ${result.reasons.map((r) => `#${r.idx + 1} (${r.reason})`).join(", ")}`,
+            );
+            setRepairInstructions("");
+            queryClient.invalidateQueries({ queryKey: getGetNovelQueryKey(novelId) });
+          }
+        },
+        onError: (err) => {
+          setRepairNotice(err instanceof Error ? `Repair failed: ${err.message}` : "Repair failed");
         },
       },
     );
@@ -282,6 +313,45 @@ export default function NovelDetail() {
           <AlertCircle className="w-12 h-12 text-destructive mx-auto" />
           <h3 className="text-2xl font-bold font-serif uppercase text-destructive">Generation Failed</h3>
           <p className="font-mono text-sm">{novel.error || "An unknown error occurred during generation."}</p>
+        </div>
+      )}
+
+      {/* Surgical Quality-Control Repair — scans for blank/failed panels and re-rolls
+          ONLY those, optionally with extra instructions appended to their prompt. */}
+      {!isGenerating && novel.panels.length > 0 && (
+        <div className="print:hidden mb-12 border-4 border-border p-6 bg-muted/20 space-y-3">
+          <div className="flex items-center gap-3">
+            <Wrench className="w-5 h-5" />
+            <h3 className="font-bold font-serif uppercase tracking-wider">Quality Control & Repair</h3>
+          </div>
+          <p className="font-mono text-xs text-muted-foreground">
+            Scan every panel for the blank-image failure mode (all black / all white / solid color) and re-roll just the bad ones. Optionally add a directive like "make the protagonist male" or "no nudity" — it will be appended to the prompt for every panel being redone.
+          </p>
+          <textarea
+            value={repairInstructions}
+            onChange={(e) => setRepairInstructions(e.target.value)}
+            placeholder="Optional repair directive (e.g. 'get rid of the blank panels and make sure every panel shows an actual scene')"
+            rows={2}
+            disabled={repair.isPending}
+            maxLength={2000}
+            className="w-full font-mono text-sm border-2 border-border bg-background p-3 resize-y"
+          />
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <Button
+              onClick={handleRepair}
+              disabled={repair.isPending || regenerate.isPending || exportingVideo}
+              className="font-bold uppercase tracking-widest"
+            >
+              {repair.isPending ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Scanning & Repairing...</>
+              ) : (
+                <><Wrench className="w-4 h-4 mr-2" /> Run Quality Check & Repair</>
+              )}
+            </Button>
+            {repairNotice && (
+              <p className="font-mono text-xs flex-1 min-w-0 break-words">{repairNotice}</p>
+            )}
+          </div>
         </div>
       )}
 

@@ -162,6 +162,28 @@ export const RegenerateNovelResponse = zod.object({
 
 
 /**
+ * Scans every panel for the "blank image" failure mode (solid black/white/single-color render) plus any panel already marked failed, and regenerates just those — leaving good panels alone. Optional `instructions` is appended to each targeted panel's prompt as an additional override directive.
+
+ * @summary Quality-control scan + surgical re-roll of blank/failed panels.
+ */
+export const RepairNovelParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const RepairNovelBody = zod.object({
+  "instructions": zod.string().optional().describe('Free-form repair directive appended to each targeted panel\'s prompt.')
+})
+
+export const RepairNovelResponse = zod.object({
+  "targetedPanels": zod.number(),
+  "reasons": zod.array(zod.object({
+  "idx": zod.number(),
+  "reason": zod.string()
+}))
+})
+
+
+/**
  * @summary List recent screenplays
  */
 export const ListScreenplaysResponseItem = zod.object({

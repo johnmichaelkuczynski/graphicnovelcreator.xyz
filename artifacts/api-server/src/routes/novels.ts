@@ -9,7 +9,7 @@ import {
   ListNovelsResponse,
   RegenerateNovelParams,
 } from "@workspace/api-zod";
-import { startNovelGeneration } from "../lib/novel-pipeline";
+import { startNovelGeneration, repairNovel, NovelBusyError } from "../lib/novel-pipeline";
 import { MODELS, type ZhiId } from "../lib/ai";
 
 const router: IRouter = Router();
@@ -192,6 +192,39 @@ router.post("/novels/:id/regenerate", async (req, res): Promise<void> => {
       panels: [],
     }),
   );
+});
+
+// Surgical quality-control repair endpoint. Scans every panel for the
+// "blank panel" failure mode (solid black/white/single-color image) plus any
+// panel already marked as failed, and re-rolls those — and only those —
+// against the same prompt scaffolding the initial generation used. An
+// optional `instructions` string is appended to the per-panel prompt as an
+// override directive, enabling commands like "get rid of the blank panels"
+// or "make the protagonist older" without re-planning the whole novel.
+router.post("/novels/:id/repair", async (req, res): Promise<void> => {
+  const params = GetNovelParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const instructions =
+    typeof req.body?.instructions === "string" ? req.body.instructions.slice(0, 2000) : undefined;
+  try {
+    const result = await repairNovel(params.data.id, instructions);
+    res.json(result);
+  } catch (err) {
+    if (err instanceof NovelBusyError) {
+      // 409 Conflict — caller should wait for the in-flight generation to finish.
+      res.status(409).json({ error: err.message });
+      return;
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === "Novel not found") {
+      res.status(404).json({ error: msg });
+      return;
+    }
+    res.status(500).json({ error: msg });
+  }
 });
 
 router.delete("/novels/:id", async (req, res): Promise<void> => {

@@ -28,6 +28,8 @@ import type {
   NovelSummary,
   RefinementRequest,
   RefinementResult,
+  RepairNovel200,
+  RepairNovelBody,
   Screenplay,
   ScreenplayInput,
   ScreenplaySummary
@@ -633,6 +635,80 @@ export const useRegenerateNovel = <TError = ErrorType<ApiError>,
         TContext
       > => {
       return useMutation(getRegenerateNovelMutationOptions(options));
+    }
+
+export const getRepairNovelUrl = (id: number,) => {
+
+
+
+
+  return `/api/novels/${id}/repair`
+}
+
+/**
+ * Scans every panel for the "blank image" failure mode (solid black/white/single-color render) plus any panel already marked failed, and regenerates just those — leaving good panels alone. Optional `instructions` is appended to each targeted panel's prompt as an additional override directive.
+
+ * @summary Quality-control scan + surgical re-roll of blank/failed panels.
+ */
+export const repairNovel = async (id: number,
+    repairNovelBody?: RepairNovelBody, options?: RequestInit): Promise<RepairNovel200> => {
+
+  return customFetch<RepairNovel200>(getRepairNovelUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      repairNovelBody,)
+  }
+);}
+
+
+
+
+export const getRepairNovelMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof repairNovel>>, TError,{id: number;data?: BodyType<RepairNovelBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof repairNovel>>, TError,{id: number;data?: BodyType<RepairNovelBody>}, TContext> => {
+
+const mutationKey = ['repairNovel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof repairNovel>>, {id: number;data?: BodyType<RepairNovelBody>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  repairNovel(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RepairNovelMutationResult = NonNullable<Awaited<ReturnType<typeof repairNovel>>>
+    export type RepairNovelMutationBody = BodyType<RepairNovelBody> | undefined
+    export type RepairNovelMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Quality-control scan + surgical re-roll of blank/failed panels.
+ */
+export const useRepairNovel = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof repairNovel>>, TError,{id: number;data?: BodyType<RepairNovelBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof repairNovel>>,
+        TError,
+        {id: number;data?: BodyType<RepairNovelBody>},
+        TContext
+      > => {
+      return useMutation(getRepairNovelMutationOptions(options));
     }
 
 export const getListScreenplaysUrl = () => {
