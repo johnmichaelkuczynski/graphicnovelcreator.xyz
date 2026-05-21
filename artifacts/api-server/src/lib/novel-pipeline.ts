@@ -1,7 +1,12 @@
 import { eq, asc } from "drizzle-orm";
 import { db, novelsTable, panelsTable, type Novel } from "@workspace/db";
 import { generateText, generateImage, describeReferenceImages, type ZhiId } from "./ai";
-import { analyzePngForBlankness } from "./image-qc";
+import {
+  analyzePngForBlankness,
+  computeDHash,
+  hammingDistance,
+  DUPLICATE_DHASH_THRESHOLD,
+} from "./image-qc";
 import { logger } from "./logger";
 
 // Anchor strengths kept at module scope so the QC helper can reuse them. See
@@ -24,10 +29,20 @@ async function generateImageWithQC(opts: {
   isFirstPanel: boolean;
   width: number;
   height: number;
-}): Promise<string> {
-  const MAX_ATTEMPTS = 3;
+  // Perceptual hashes of every panel already accepted into THIS novel. New
+  // images that come back within DUPLICATE_DHASH_THRESHOLD of any of these
+  // are rejected as duplicates and re-rolled with a varied seed. Empty for
+  // the very first panel.
+  priorHashes: ReadonlyArray<bigint>;
+}): Promise<{ dataUrl: string; hash: bigint }> {
+  // Bumped from 3 to 5: blank failures and duplicate failures both consume
+  // attempts, so giving the budget some headroom matters now that one
+  // generation can be rejected for two independent reasons.
+  const MAX_ATTEMPTS = 5;
   let lastReason = "";
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    // Seed delta of 7919 (a large prime) per retry so we never re-sample an
+    // adjacent latent point and just produce the same failure mode again.
     const seed = ((opts.baseSeed + attempt * 7919) % 999_999_999) + 1;
     const dataUrl = await generateImage({
       prompt: opts.promptText,
@@ -37,33 +52,55 @@ async function generateImageWithQC(opts: {
       width: opts.width,
       height: opts.height,
     });
-    let qcOk = false;
+
+    // Gate 1: blank-image detection.
+    let hash: bigint;
     try {
       const qc = analyzePngForBlankness(dataUrl);
-      if (!qc.isBlank) {
-        qcOk = true;
-        if (attempt > 0) {
-          logger.info({ novelId: opts.novelId, panelIdx: opts.panelIdx, attempt }, "QC: recovered panel after retry");
-        }
-        return dataUrl;
+      if (qc.isBlank) {
+        lastReason = qc.reason;
+        logger.warn(
+          { novelId: opts.novelId, panelIdx: opts.panelIdx, attempt, reason: qc.reason, mean: qc.meanLuma.toFixed(1), stddev: qc.lumaStdDev.toFixed(2), buckets: qc.uniqueColorBuckets },
+          "QC: rejected blank panel, retrying",
+        );
+        continue;
       }
-      lastReason = qc.reason;
-      logger.warn(
-        { novelId: opts.novelId, panelIdx: opts.panelIdx, attempt, reason: qc.reason, mean: qc.meanLuma.toFixed(1), stddev: qc.lumaStdDev.toFixed(2), buckets: qc.uniqueColorBuckets },
-        "QC: rejected blank panel, retrying",
-      );
+      // Gate 2: duplicate-image detection. Compute the perceptual hash and
+      // measure Hamming distance to every previously-accepted panel.
+      hash = computeDHash(dataUrl);
     } catch (err) {
-      // Fail CLOSED: if we can't decode the PNG to verify it, treat the
-      // attempt as failed QC and retry. Accepting an undecodable payload
-      // would let malformed images sneak through as "done", defeating the
-      // entire point of the QC gate.
+      // Fail CLOSED: undecodable payloads count as a failed attempt rather
+      // than a silent acceptance. Accepting them would let malformed images
+      // survive as "done", defeating the QC gate entirely.
       lastReason = `qc analysis threw: ${err instanceof Error ? err.message : String(err)}`;
       logger.warn(
         { novelId: opts.novelId, panelIdx: opts.panelIdx, attempt, err: err instanceof Error ? err.message : err },
         "QC: analysis threw, retrying",
       );
+      continue;
     }
-    void qcOk;
+
+    let minDist = Number.POSITIVE_INFINITY;
+    for (const prior of opts.priorHashes) {
+      const d = hammingDistance(hash, prior);
+      if (d < minDist) minDist = d;
+    }
+    if (minDist <= DUPLICATE_DHASH_THRESHOLD) {
+      lastReason = `duplicate of an earlier panel (dHash distance ${minDist})`;
+      logger.warn(
+        { novelId: opts.novelId, panelIdx: opts.panelIdx, attempt, minDist },
+        "QC: rejected duplicate panel, retrying with varied seed",
+      );
+      continue;
+    }
+
+    if (attempt > 0) {
+      logger.info(
+        { novelId: opts.novelId, panelIdx: opts.panelIdx, attempt },
+        "QC: recovered panel after retry",
+      );
+    }
+    return { dataUrl, hash };
   }
   throw new Error(`Image failed QC after ${MAX_ATTEMPTS} attempts (${lastReason})`);
 }
@@ -273,6 +310,9 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
     // baked into every prompt via refStyleLead/userStyleLead/fallbackStyle. We keep the
     // anchor plumbing here so re-enabling img2img is a one-line change in ai.ts.
     let styleAnchor: string | undefined = firstRef?.dataUrl;
+    // Running list of accepted-panel fingerprints so each new panel can be
+    // checked against all prior ones for near-duplicates. See computeDHash.
+    const priorHashes: bigint[] = [];
 
     for (const row of inserted.sort((a, b) => a.idx - b.idx)) {
       const plan = plans[row.idx];
@@ -282,18 +322,20 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
         .where(eq(panelsTable.id, row.id));
       try {
         const isFirstPanel = row.idx === 0;
-        const dataUrl = await generateImageWithQC({
+        const { dataUrl, hash } = await generateImageWithQC({
           promptText: `${refStyleLead}${userStyleLead}${fallbackStyle}${plan.imagePrompt}. No text, no captions, no speech bubbles, no panel borders inside the image.${framingRule}${specSuffix}`,
           novelId,
           panelIdx: row.idx,
           baseSeed: novelSeed,
           styleAnchor,
           isFirstPanel,
+          priorHashes,
           // 4:3 = more vertical room for heads. The detail page uses object-contain so the
           // taller image is letterboxed, not cropped.
           width: 1024,
           height: 768,
         });
+        priorHashes.push(hash);
         // Lock subsequent panels to panel 1's actual output — this is what forces style
         // consistency across the entire novel.
         if (isFirstPanel) {
@@ -380,29 +422,56 @@ export async function repairNovel(
 
   const targets: Array<{ id: number; idx: number; imagePrompt: string | null }> = [];
   const reasons: Array<{ idx: number; reason: string }> = [];
+  const targetIds = new Set<number>();
+  const pushTarget = (p: { id: number; idx: number; imagePrompt: string | null }, reason: string) => {
+    if (targetIds.has(p.id)) return;
+    targetIds.add(p.id);
+    targets.push({ id: p.id, idx: p.idx, imagePrompt: p.imagePrompt });
+    reasons.push({ idx: p.idx, reason });
+  };
+
+  // First pass: blank, failed, undecodable, missing-payload — and collect
+  // dHashes of every panel that survives the basic checks so we can scan for
+  // near-duplicates in a second pass.
+  const survivorHashes: Array<{ id: number; idx: number; imagePrompt: string | null; hash: bigint }> = [];
   for (const p of allPanels) {
     if (p.status === "failed") {
-      targets.push({ id: p.id, idx: p.idx, imagePrompt: p.imagePrompt });
-      reasons.push({ idx: p.idx, reason: `previously failed: ${p.error ?? "unknown"}` });
+      pushTarget(p, `previously failed: ${p.error ?? "unknown"}`);
       continue;
     }
     if (p.status === "done" && p.imageDataUrl) {
       try {
         const qc = analyzePngForBlankness(p.imageDataUrl);
         if (qc.isBlank) {
-          targets.push({ id: p.id, idx: p.idx, imagePrompt: p.imagePrompt });
-          reasons.push({ idx: p.idx, reason: `blank panel (${qc.reason})` });
+          pushTarget(p, `blank panel (${qc.reason})`);
+          continue;
         }
+        survivorHashes.push({ id: p.id, idx: p.idx, imagePrompt: p.imagePrompt, hash: computeDHash(p.imageDataUrl) });
       } catch (err) {
-        // Fail CLOSED here too: an undecodable image is by definition broken.
-        // Target it for repair so a corrupted payload doesn't survive a scan.
-        targets.push({ id: p.id, idx: p.idx, imagePrompt: p.imagePrompt });
-        reasons.push({ idx: p.idx, reason: `undecodable image (${err instanceof Error ? err.message : "parse error"})` });
+        // Fail CLOSED: an undecodable image is by definition broken. Target it
+        // so a corrupted payload doesn't survive a scan.
+        pushTarget(p, `undecodable image (${err instanceof Error ? err.message : "parse error"})`);
       }
     } else if (p.status === "done" && !p.imageDataUrl) {
-      // Marked done but with no payload — corrupt row state, repair it.
-      targets.push({ id: p.id, idx: p.idx, imagePrompt: p.imagePrompt });
-      reasons.push({ idx: p.idx, reason: "missing image payload" });
+      pushTarget(p, "missing image payload");
+    }
+  }
+
+  // Second pass: near-duplicate detection across the survivors. For each pair
+  // within DUPLICATE_DHASH_THRESHOLD, KEEP the earlier panel (lower idx) and
+  // target the later one — re-rolling it with a varied seed will produce a
+  // visually distinct image while preserving the chronological order.
+  for (let i = 0; i < survivorHashes.length; i++) {
+    if (targetIds.has(survivorHashes[i].id)) continue;
+    for (let j = i + 1; j < survivorHashes.length; j++) {
+      if (targetIds.has(survivorHashes[j].id)) continue;
+      const d = hammingDistance(survivorHashes[i].hash, survivorHashes[j].hash);
+      if (d <= DUPLICATE_DHASH_THRESHOLD) {
+        pushTarget(
+          survivorHashes[j],
+          `duplicate of panel #${survivorHashes[i].idx + 1} (dHash distance ${d})`,
+        );
+      }
     }
   }
 
@@ -511,6 +580,27 @@ async function regenerateSpecificPanels(
     if (panel0?.imageDataUrl) styleAnchor = panel0.imageDataUrl;
   }
 
+  // Pre-load perceptual hashes of every panel we're KEEPING, so the QC gate
+  // can reject any regenerated panel that comes back looking like one of the
+  // existing-and-untouched panels. New panels are added to this list as they
+  // succeed, so the batch also self-deduplicates internally.
+  const targetIdSet = new Set(targets.map((t) => t.id));
+  const allCurrent = await db
+    .select({ id: panelsTable.id, imageDataUrl: panelsTable.imageDataUrl, status: panelsTable.status })
+    .from(panelsTable)
+    .where(eq(panelsTable.novelId, novelId));
+  const priorHashes: bigint[] = [];
+  for (const p of allCurrent) {
+    if (targetIdSet.has(p.id)) continue;
+    if (p.status !== "done" || !p.imageDataUrl) continue;
+    try {
+      priorHashes.push(computeDHash(p.imageDataUrl));
+    } catch {
+      // Unhashable — skip; the panel is already a repair target if it was
+      // unparseable, otherwise it's not blocking us from generating new ones.
+    }
+  }
+
   for (const row of targets.sort((a, b) => a.idx - b.idx)) {
     if (!row.imagePrompt) {
       logger.warn({ novelId, panelIdx: row.idx }, "Repair: panel has no imagePrompt, skipping");
@@ -523,16 +613,22 @@ async function regenerateSpecificPanels(
     await db.update(panelsTable).set({ status: "generating" }).where(eq(panelsTable.id, row.id));
     try {
       const isFirstPanel = row.idx === 0;
-      const dataUrl = await generateImageWithQC({
+      // Vary the base seed per repair target so we don't just resample the
+      // same latent point that produced the original (possibly duplicate)
+      // image. The per-panel idx mixes in deterministically.
+      const repairSeed = ((novelSeed + (row.idx + 1) * 104729) % 999_999_999) + 1;
+      const { dataUrl, hash } = await generateImageWithQC({
         promptText: `${refStyleLead}${userStyleLead}${fallbackStyle}${row.imagePrompt}. No text, no captions, no speech bubbles, no panel borders inside the image.${framingRule}${specSuffix}`,
         novelId,
         panelIdx: row.idx,
-        baseSeed: novelSeed,
+        baseSeed: repairSeed,
         styleAnchor,
         isFirstPanel,
+        priorHashes,
         width: 1024,
         height: 768,
       });
+      priorHashes.push(hash);
       if (isFirstPanel) styleAnchor = dataUrl;
       await db
         .update(panelsTable)

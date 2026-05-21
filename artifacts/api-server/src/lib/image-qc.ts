@@ -28,6 +28,65 @@ function decodePngDataUrl(dataUrl: string): PNG {
   return PNG.sync.read(buf);
 }
 
+// ─── Perceptual hash (dHash) for duplicate detection ─────────────────────────
+//
+// Same-seed diffusion with similar prompts (which is exactly our setup, since
+// we lock a per-novel seed for style consistency) reliably produces near-
+// duplicate panels — the model converges on the same latent point. We need a
+// fingerprint of each generated image so the pipeline can detect "this panel
+// looks 95% identical to panel 3" and re-roll with a varied seed.
+//
+// dHash: downsample to 9x8 grayscale, then for each row record whether each
+// pixel is brighter than its right-hand neighbour. 8 rows * 8 comparisons =
+// 64 bits. Comparing two hashes with Hamming distance: <=10 bits different
+// out of 64 is the canonical "near-duplicate" threshold in the perceptual-
+// hashing literature.
+export function computeDHash(dataUrl: string): bigint {
+  const png = decodePngDataUrl(dataUrl);
+  const { width, height, data } = png;
+  const cols = 9;
+  const rows = 8;
+  // Downsample via nearest-neighbour. For our 1024x768 inputs this is plenty
+  // accurate — dHash is intentionally low-res because we WANT it to ignore
+  // small differences and capture overall composition + brightness layout.
+  const gray = new Array<number>(cols * rows);
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const sx = Math.min(width - 1, Math.floor(((x + 0.5) * width) / cols));
+      const sy = Math.min(height - 1, Math.floor(((y + 0.5) * height) / rows));
+      const idx = (sy * width + sx) * 4;
+      gray[y * cols + x] = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+    }
+  }
+  let hash = 0n;
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols - 1; x++) {
+      hash <<= 1n;
+      if (gray[y * cols + x] > gray[y * cols + x + 1]) hash |= 1n;
+    }
+  }
+  return hash;
+}
+
+// Hamming distance between two 64-bit perceptual hashes — count of differing
+// bits. Lower = more similar. 0 = identical fingerprint.
+export function hammingDistance(a: bigint, b: bigint): number {
+  let x = a ^ b;
+  let count = 0;
+  while (x !== 0n) {
+    if ((x & 1n) === 1n) count++;
+    x >>= 1n;
+  }
+  return count;
+}
+
+// Threshold used by the pipeline to call two panels "the same graphic". 10 bits
+// out of 64 (~15%) is the conventional dHash near-duplicate cutoff and matches
+// the kind of "two panels are basically identical" cases we see in practice
+// (the man-at-the-map-with-pink-dress-woman case the user reported sits well
+// below 10 — usually 2–6 bits apart).
+export const DUPLICATE_DHASH_THRESHOLD = 10;
+
 // Quantise each (R,G,B) sample into a 4-bit-per-channel bucket (16*16*16 = 4096
 // total buckets) and count how many distinct buckets the image touches. A real
 // scene easily lights up 200+ buckets; a "blank" image touches at most a few.
