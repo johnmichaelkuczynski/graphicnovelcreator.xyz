@@ -131,6 +131,37 @@ export const DeleteNovelParams = zod.object({
 
 
 /**
+ * @summary Wipe a novel's existing panels and re-run generation using the same inputs.
+ */
+export const RegenerateNovelParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const RegenerateNovelResponse = zod.object({
+  "id": zod.number(),
+  "title": zod.string(),
+  "sourceText": zod.string(),
+  "specifications": zod.string(),
+  "panelCount": zod.number(),
+  "textModel": zod.string(),
+  "artStyle": zod.string().nullish(),
+  "explicit": zod.boolean().optional(),
+  "status": zod.string(),
+  "error": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "panels": zod.array(zod.object({
+  "id": zod.number(),
+  "idx": zod.number(),
+  "caption": zod.string().nullish(),
+  "imagePrompt": zod.string().nullish(),
+  "imageDataUrl": zod.string().nullish(),
+  "status": zod.string().describe('pending | generating | done | failed'),
+  "error": zod.string().nullish()
+}))
+})
+
+
+/**
  * @summary List recent screenplays
  */
 export const ListScreenplaysResponseItem = zod.object({

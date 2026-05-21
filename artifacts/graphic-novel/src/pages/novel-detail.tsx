@@ -1,6 +1,7 @@
 import { useLocation, useParams } from "wouter";
-import { useGetNovel, getGetNovelQueryKey } from "@workspace/api-client-react";
-import { ArrowLeft, Download, Printer, Loader2, AlertCircle, Video } from "lucide-react";
+import { useGetNovel, getGetNovelQueryKey, useRegenerateNovel } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, Printer, Loader2, AlertCircle, Video, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { format } from "date-fns";
@@ -25,6 +26,25 @@ export default function NovelDetail() {
   const [videoProgress, setVideoProgress] = useState(0);
   const [audioTrack, setAudioTrackState] = useState<AudioTrack | null>(null);
   const [audioError, setAudioError] = useState("");
+  const queryClient = useQueryClient();
+  const regenerate = useRegenerateNovel();
+
+  const handleRegenerate = () => {
+    if (!id) return;
+    const novelId = Number(id);
+    regenerate.mutate(
+      { id: novelId },
+      {
+        onSuccess: (fresh) => {
+          // Replace the cached novel with the freshly-reset one (no panels, pending status)
+          // so the UI immediately shows the "Generating..." state and the existing failed
+          // panels disappear without waiting for the next refetch.
+          queryClient.setQueryData(getGetNovelQueryKey(novelId), fresh);
+          queryClient.invalidateQueries({ queryKey: getGetNovelQueryKey(novelId) });
+        },
+      },
+    );
+  };
 
   // On mount, take any audio uploaded on /novel/new and bind it to this novel id.
   // If we navigated back to this page later, restore from the per-novel slot.
@@ -124,6 +144,19 @@ export default function NovelDetail() {
           <ArrowLeft className="w-4 h-4 mr-2" /> Library
         </Button>
         <div className="flex gap-2">
+          <Button
+            onClick={handleRegenerate}
+            disabled={isGenerating || regenerate.isPending || exportingVideo}
+            variant="outline"
+            className="font-bold uppercase tracking-widest"
+            title="Wipe existing panels and re-run generation with the same inputs"
+          >
+            {regenerate.isPending ? (
+              <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Restarting...</>
+            ) : (
+              <><RotateCcw className="w-4 h-4 mr-2" /> Regenerate</>
+            )}
+          </Button>
           <Button onClick={handlePrint} disabled={isGenerating || exportingVideo} variant="outline" className="font-bold uppercase tracking-widest">
             <Printer className="w-4 h-4 mr-2" /> Export PDF
           </Button>

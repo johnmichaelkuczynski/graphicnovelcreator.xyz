@@ -146,6 +146,31 @@ paths:
         "204":
           description: Deleted
 
+  /novels/{id}/regenerate:
+    post:
+      operationId: regenerateNovel
+      tags: [novels]
+      summary: Wipe a novel's existing panels and re-run generation using the same inputs.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Novel"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
   /screenplays:
     get:
       operationId: listScreenplays

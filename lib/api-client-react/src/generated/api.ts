@@ -565,6 +565,76 @@ export const useDeleteNovel = <TError = ErrorType<unknown>,
       return useMutation(getDeleteNovelMutationOptions(options));
     }
 
+export const getRegenerateNovelUrl = (id: number,) => {
+
+
+
+
+  return `/api/novels/${id}/regenerate`
+}
+
+/**
+ * @summary Wipe a novel's existing panels and re-run generation using the same inputs.
+ */
+export const regenerateNovel = async (id: number, options?: RequestInit): Promise<Novel> => {
+
+  return customFetch<Novel>(getRegenerateNovelUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRegenerateNovelMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof regenerateNovel>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof regenerateNovel>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['regenerateNovel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof regenerateNovel>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  regenerateNovel(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RegenerateNovelMutationResult = NonNullable<Awaited<ReturnType<typeof regenerateNovel>>>
+
+    export type RegenerateNovelMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Wipe a novel's existing panels and re-run generation using the same inputs.
+ */
+export const useRegenerateNovel = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof regenerateNovel>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof regenerateNovel>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getRegenerateNovelMutationOptions(options));
+    }
+
 export const getListScreenplaysUrl = () => {
 
 

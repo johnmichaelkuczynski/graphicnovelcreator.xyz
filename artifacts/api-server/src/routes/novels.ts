@@ -7,6 +7,7 @@ import {
   GetNovelResponse,
   DeleteNovelParams,
   ListNovelsResponse,
+  RegenerateNovelParams,
 } from "@workspace/api-zod";
 import { startNovelGeneration } from "../lib/novel-pipeline";
 import { MODELS, type ZhiId } from "../lib/ai";
@@ -143,6 +144,52 @@ router.get("/novels/:id", async (req, res): Promise<void> => {
         status: p.status,
         error: p.error,
       })),
+    }),
+  );
+});
+
+router.post("/novels/:id/regenerate", async (req, res): Promise<void> => {
+  const params = RegenerateNovelParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const [novel] = await db.select().from(novelsTable).where(eq(novelsTable.id, params.data.id));
+  if (!novel) {
+    res.status(404).json({ error: "Novel not found" });
+    return;
+  }
+
+  // Wipe existing panels and reset novel status so the pipeline starts fresh against the
+  // same inputs (sourceText, specifications, artStyle, panelCount, model, referenceImages).
+  await db.delete(panelsTable).where(eq(panelsTable.novelId, novel.id));
+  const [updated] = await db
+    .update(novelsTable)
+    .set({ status: "pending", error: null })
+    .where(eq(novelsTable.id, novel.id))
+    .returning();
+
+  if (!updated) {
+    res.status(500).json({ error: "Failed to reset novel" });
+    return;
+  }
+
+  startNovelGeneration(updated.id);
+
+  res.json(
+    GetNovelResponse.parse({
+      id: updated.id,
+      title: updated.title,
+      sourceText: updated.sourceText,
+      specifications: updated.specifications,
+      panelCount: updated.panelCount,
+      textModel: updated.textModel,
+      artStyle: updated.artStyle ?? null,
+      explicit: updated.explicit,
+      status: updated.status,
+      error: updated.error ?? null,
+      createdAt: updated.createdAt.toISOString(),
+      panels: [],
     }),
   );
 });
