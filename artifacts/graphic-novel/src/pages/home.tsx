@@ -19,23 +19,38 @@ export default function Home() {
   const deleteNovel = useDeleteNovel();
   const deleteScreenplay = useDeleteScreenplay();
 
-  const handleDeleteNovel = (e: React.MouseEvent, id: number, title: string) => {
+  const handleDeleteNovel = (e: React.MouseEvent, id: number) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!confirm(`Delete "${title || 'Untitled'}"? This cannot be undone.`)) return;
+    // Optimistic removal so the row disappears instantly even before the server responds.
+    const key = getListNovelsQueryKey();
+    const prev = queryClient.getQueryData<typeof novels>(key);
+    if (prev) queryClient.setQueryData(key, prev.filter((n) => n.id !== id));
     deleteNovel.mutate(
       { id },
-      { onSuccess: () => queryClient.invalidateQueries({ queryKey: getListNovelsQueryKey() }) },
+      {
+        onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
+        onError: () => {
+          if (prev) queryClient.setQueryData(key, prev);
+        },
+      },
     );
   };
 
-  const handleDeleteScreenplay = (e: React.MouseEvent, id: number, title: string) => {
+  const handleDeleteScreenplay = (e: React.MouseEvent, id: number) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!confirm(`Delete "${title || 'Untitled'}"? This cannot be undone.`)) return;
+    const key = getListScreenplaysQueryKey();
+    const prev = queryClient.getQueryData<typeof screenplays>(key);
+    if (prev) queryClient.setQueryData(key, prev.filter((s) => s.id !== id));
     deleteScreenplay.mutate(
       { id },
-      { onSuccess: () => queryClient.invalidateQueries({ queryKey: getListScreenplaysQueryKey() }) },
+      {
+        onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
+        onError: () => {
+          if (prev) queryClient.setQueryData(key, prev);
+        },
+      },
     );
   };
 
@@ -131,8 +146,7 @@ export default function Home() {
                   </Link>
                   <button
                     type="button"
-                    onClick={(e) => handleDeleteNovel(e, novel.id, novel.title || '')}
-                    disabled={deleteNovel.isPending}
+                    onClick={(e) => handleDeleteNovel(e, novel.id)}
                     aria-label={`Delete ${novel.title || 'Untitled'}`}
                     className="px-4 border-l-2 border-border hover:bg-destructive hover:text-destructive-foreground transition-colors disabled:opacity-50"
                   >
@@ -171,8 +185,7 @@ export default function Home() {
                   </Link>
                   <button
                     type="button"
-                    onClick={(e) => handleDeleteScreenplay(e, sp.id, sp.title || '')}
-                    disabled={deleteScreenplay.isPending}
+                    onClick={(e) => handleDeleteScreenplay(e, sp.id)}
                     aria-label={`Delete ${sp.title || 'Untitled'}`}
                     className="px-4 border-l-2 border-border hover:bg-destructive hover:text-destructive-foreground transition-colors disabled:opacity-50"
                   >
