@@ -1,12 +1,43 @@
 import { Link, useLocation } from "wouter";
-import { PenTool, Image as ImageIcon, FileText, ArrowRight, Library, BookOpen } from "lucide-react";
-import { useListNovels, useListScreenplays } from "@workspace/api-client-react";
+import { PenTool, Image as ImageIcon, FileText, ArrowRight, Library, BookOpen, Trash2 } from "lucide-react";
+import {
+  useListNovels,
+  useListScreenplays,
+  useDeleteNovel,
+  useDeleteScreenplay,
+  getListNovelsQueryKey,
+  getListScreenplaysQueryKey,
+} from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 
 export default function Home() {
   const [, setLocation] = useLocation();
+  const queryClient = useQueryClient();
   const { data: novels = [], isLoading: isLoadingNovels } = useListNovels();
   const { data: screenplays = [], isLoading: isLoadingScreenplays } = useListScreenplays();
+  const deleteNovel = useDeleteNovel();
+  const deleteScreenplay = useDeleteScreenplay();
+
+  const handleDeleteNovel = (e: React.MouseEvent, id: number, title: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm(`Delete "${title || 'Untitled'}"? This cannot be undone.`)) return;
+    deleteNovel.mutate(
+      { id },
+      { onSuccess: () => queryClient.invalidateQueries({ queryKey: getListNovelsQueryKey() }) },
+    );
+  };
+
+  const handleDeleteScreenplay = (e: React.MouseEvent, id: number, title: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm(`Delete "${title || 'Untitled'}"? This cannot be undone.`)) return;
+    deleteScreenplay.mutate(
+      { id },
+      { onSuccess: () => queryClient.invalidateQueries({ queryKey: getListScreenplaysQueryKey() }) },
+    );
+  };
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-12 space-y-16">
@@ -78,25 +109,36 @@ export default function Home() {
           ) : (
             <div className="space-y-4">
               {novels.map(novel => (
-                <Link key={novel.id} href={`/novel/${novel.id}`}>
-                  <a className="block border-2 border-border p-4 hover:bg-muted transition-colors flex gap-4">
-                    {novel.coverImage ? (
-                      <img src={novel.coverImage} className="w-16 h-16 object-cover border-2 border-border" />
-                    ) : (
-                      <div className="w-16 h-16 bg-secondary border-2 border-border flex items-center justify-center">
-                        <ImageIcon className="w-6 h-6 text-muted-foreground" />
+                <div key={novel.id} className="border-2 border-border hover:bg-muted transition-colors flex items-stretch">
+                  <Link href={`/novel/${novel.id}`}>
+                    <a className="flex-1 p-4 flex gap-4 min-w-0">
+                      {novel.coverImage ? (
+                        <img src={novel.coverImage} className="w-16 h-16 object-cover border-2 border-border shrink-0" />
+                      ) : (
+                        <div className="w-16 h-16 bg-secondary border-2 border-border flex items-center justify-center shrink-0">
+                          <ImageIcon className="w-6 h-6 text-muted-foreground" />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <h3 className="font-bold text-lg truncate">{novel.title || 'Untitled'}</h3>
+                        <div className="flex items-center gap-4 text-xs font-mono text-muted-foreground mt-2">
+                          <span className="uppercase tracking-wider">{novel.status}</span>
+                          <span>{novel.completedPanels} / {novel.panelCount} panels</span>
+                          <span>{format(new Date(novel.createdAt), 'MMM d, yyyy')}</span>
+                        </div>
                       </div>
-                    )}
-                    <div>
-                      <h3 className="font-bold text-lg">{novel.title || 'Untitled'}</h3>
-                      <div className="flex items-center gap-4 text-xs font-mono text-muted-foreground mt-2">
-                        <span className="uppercase tracking-wider">{novel.status}</span>
-                        <span>{novel.completedPanels} / {novel.panelCount} panels</span>
-                        <span>{format(new Date(novel.createdAt), 'MMM d, yyyy')}</span>
-                      </div>
-                    </div>
-                  </a>
-                </Link>
+                    </a>
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={(e) => handleDeleteNovel(e, novel.id, novel.title || '')}
+                    disabled={deleteNovel.isPending}
+                    aria-label={`Delete ${novel.title || 'Untitled'}`}
+                    className="px-4 border-l-2 border-border hover:bg-destructive hover:text-destructive-foreground transition-colors disabled:opacity-50"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                </div>
               ))}
             </div>
           )}
@@ -117,15 +159,26 @@ export default function Home() {
           ) : (
             <div className="space-y-4">
               {screenplays.map(sp => (
-                <Link key={sp.id} href={`/screenplay/${sp.id}`}>
-                  <a className="block border-2 border-border p-4 hover:bg-muted transition-colors">
-                    <h3 className="font-bold text-lg">{sp.title || 'Untitled'}</h3>
-                    <div className="flex items-center gap-4 text-xs font-mono text-muted-foreground mt-2">
-                      <span>{sp.textModel}</span>
-                      <span>{format(new Date(sp.createdAt), 'MMM d, yyyy')}</span>
-                    </div>
-                  </a>
-                </Link>
+                <div key={sp.id} className="border-2 border-border hover:bg-muted transition-colors flex items-stretch">
+                  <Link href={`/screenplay/${sp.id}`}>
+                    <a className="flex-1 p-4 min-w-0">
+                      <h3 className="font-bold text-lg truncate">{sp.title || 'Untitled'}</h3>
+                      <div className="flex items-center gap-4 text-xs font-mono text-muted-foreground mt-2">
+                        <span>{sp.textModel}</span>
+                        <span>{format(new Date(sp.createdAt), 'MMM d, yyyy')}</span>
+                      </div>
+                    </a>
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={(e) => handleDeleteScreenplay(e, sp.id, sp.title || '')}
+                    disabled={deleteScreenplay.isPending}
+                    aria-label={`Delete ${sp.title || 'Untitled'}`}
+                    className="px-4 border-l-2 border-border hover:bg-destructive hover:text-destructive-foreground transition-colors disabled:opacity-50"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                </div>
               ))}
             </div>
           )}
