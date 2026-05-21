@@ -5,14 +5,56 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { format } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { exportNovelVideo } from "@/lib/video-export";
+import {
+  takePendingAudio,
+  setNovelAudio,
+  getNovelAudio,
+  clearNovelAudio,
+  readAudioDuration,
+  type AudioTrack,
+} from "@/lib/audio-track";
+import { Music, X } from "lucide-react";
+import { Input } from "@/components/ui/input";
 
 export default function NovelDetail() {
   const { id } = useParams();
   const [, setLocation] = useLocation();
   const [exportingVideo, setExportingVideo] = useState(false);
   const [videoProgress, setVideoProgress] = useState(0);
+  const [audioTrack, setAudioTrackState] = useState<AudioTrack | null>(null);
+  const [audioError, setAudioError] = useState("");
+
+  // On mount, take any audio uploaded on /novel/new and bind it to this novel id.
+  // If we navigated back to this page later, restore from the per-novel slot.
+  useEffect(() => {
+    if (!id) return;
+    const existing = getNovelAudio(id);
+    if (existing) {
+      setAudioTrackState(existing);
+      return;
+    }
+    const pending = takePendingAudio();
+    if (pending) {
+      setNovelAudio(id, pending);
+      setAudioTrackState(pending);
+    }
+  }, [id]);
+
+  const handleAudioFile = async (file: File | null) => {
+    setAudioError("");
+    if (!id) return;
+    if (!file) { clearNovelAudio(id); setAudioTrackState(null); return; }
+    try {
+      const durationSec = await readAudioDuration(file);
+      const t: AudioTrack = { blob: file, filename: file.name, durationSec };
+      setNovelAudio(id, t);
+      setAudioTrackState(t);
+    } catch (err) {
+      setAudioError(err instanceof Error ? err.message : "Could not read audio");
+    }
+  };
 
   const { data: novel, isLoading, error } = useGetNovel(Number(id), {
     query: {
@@ -40,6 +82,8 @@ export default function NovelDetail() {
           .filter((p) => p.status === "done" && p.imageDataUrl)
           .map((p) => ({ caption: p.caption || "", imageDataUrl: p.imageDataUrl! })),
         secondsPerPanel: 3,
+        audioBlob: audioTrack?.blob,
+        syncToAudio: !!audioTrack,
         onProgress: (p) => setVideoProgress(p),
       });
     } catch (err) {
@@ -105,6 +149,44 @@ export default function NovelDetail() {
           <span>{format(new Date(novel.createdAt), 'MMMM yyyy')}</span>
         </div>
       </header>
+
+      <div className="print:hidden mb-12 border-4 border-border p-6 bg-muted/20 space-y-3">
+        <div className="flex items-center gap-3">
+          <Music className="w-5 h-5" />
+          <h3 className="font-bold font-serif uppercase tracking-wider">Soundtrack for MP4 Export</h3>
+        </div>
+        {audioTrack ? (
+          <div className="flex items-center justify-between gap-4 border-2 border-border p-3 bg-background">
+            <div className="font-mono text-sm min-w-0">
+              <div className="font-bold truncate">{audioTrack.filename}</div>
+              <div className="text-muted-foreground text-xs mt-1">
+                {Math.floor(audioTrack.durationSec / 60)}m {Math.round(audioTrack.durationSec % 60)}s · MP4 will be muxed to match this length
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleAudioFile(null)}
+              className="p-2 border-2 border-border hover:bg-destructive hover:text-destructive-foreground"
+              aria-label="Remove audio"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        ) : (
+          <>
+            <p className="font-mono text-xs text-muted-foreground">
+              Attach an MP3 and the exported MP4 will exactly match its length, with the audio muxed in. Great for music videos.
+            </p>
+            <Input
+              type="file"
+              accept="audio/mpeg,audio/mp3,audio/*"
+              onChange={(e) => handleAudioFile(e.target.files?.[0] ?? null)}
+              className="font-mono"
+            />
+          </>
+        )}
+        {audioError && <p className="font-mono text-xs text-destructive">{audioError}</p>}
+      </div>
 
       {isGenerating && (
         <div className="print:hidden mb-16 p-8 border-4 border-border bg-muted/10 text-center space-y-6">

@@ -20,6 +20,8 @@ import { FileUploader } from "@/components/file-uploader";
 import { ReferenceImagesUploader, ReferenceImage } from "@/components/reference-images-uploader";
 import { popRefinedRefs } from "@/lib/refined-refs";
 import { ArtStylePicker } from "@/components/art-style-picker";
+import { readAudioDuration, setPendingAudio, setNovelAudio, type AudioTrack } from "@/lib/audio-track";
+import { Music, X } from "lucide-react";
 
 const formSchema = z.object({
   title: z.string().optional(),
@@ -39,6 +41,28 @@ export default function NovelNew() {
 
   const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>(() => popRefinedRefs());
   const [lengthUnit, setLengthUnit] = useState<"panels" | "seconds">("panels");
+  const [audioTrack, setAudioTrack] = useState<AudioTrack | null>(null);
+  const [audioError, setAudioError] = useState<string>("");
+
+  const handleAudioFile = async (file: File | null) => {
+    setAudioError("");
+    if (!file) { setAudioTrack(null); setPendingAudio(null); return; }
+    try {
+      const durationSec = await readAudioDuration(file);
+      const track: AudioTrack = { blob: file, filename: file.name, durationSec };
+      setAudioTrack(track);
+      setPendingAudio(track);
+      // Auto-set panel count to match audio length at 3s/panel (clamped to 1-50).
+      const SEC_PER_PANEL = 3;
+      const suggested = Math.max(1, Math.min(50, Math.round(durationSec / SEC_PER_PANEL)));
+      form.setValue("panelCount", suggested, { shouldDirty: true, shouldTouch: true });
+      setLengthUnit("seconds");
+    } catch (err) {
+      setAudioError(err instanceof Error ? err.message : "Could not read audio");
+      setAudioTrack(null);
+      setPendingAudio(null);
+    }
+  };
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -61,6 +85,12 @@ export default function NovelNew() {
       }
     }, {
       onSuccess: (novel) => {
+        // Bind the uploaded audio directly to the new novel's id so a stale pending blob can't
+        // accidentally attach itself to a different novel the user opens next.
+        if (audioTrack) {
+          setNovelAudio(novel.id, audioTrack);
+          setPendingAudio(null);
+        }
         queryClient.invalidateQueries({ queryKey: getListNovelsQueryKey() });
         setLocation(`/novel/${novel.id}`);
       }
@@ -159,6 +189,43 @@ export default function NovelNew() {
             <h3 className="text-xl font-bold font-serif uppercase">Reference Assets</h3>
             <p className="font-mono text-sm text-muted-foreground">Upload images for character consistency or style reference.</p>
             <ReferenceImagesUploader images={referenceImages} onChange={setReferenceImages} />
+          </div>
+
+          <div className="space-y-4 border-4 border-border p-6 bg-muted/20">
+            <div className="flex items-center gap-3">
+              <Music className="w-6 h-6" />
+              <h3 className="text-xl font-bold font-serif uppercase">Soundtrack (Optional)</h3>
+            </div>
+            <p className="font-mono text-sm text-muted-foreground">
+              Upload an MP3 and the exported MP4 will exactly match its length, with the audio muxed in.
+              Perfect for turning a music track into a TikTok-ready video. Panel count auto-adjusts to fit.
+            </p>
+            {audioTrack ? (
+              <div className="flex items-center justify-between gap-4 border-2 border-border p-4 bg-background">
+                <div className="font-mono text-sm min-w-0">
+                  <div className="font-bold truncate">{audioTrack.filename}</div>
+                  <div className="text-muted-foreground text-xs mt-1">
+                    {Math.floor(audioTrack.durationSec / 60)}m {Math.round(audioTrack.durationSec % 60)}s · MP4 will match this length
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleAudioFile(null)}
+                  className="p-2 border-2 border-border hover:bg-destructive hover:text-destructive-foreground"
+                  aria-label="Remove audio"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <Input
+                type="file"
+                accept="audio/mpeg,audio/mp3,audio/*"
+                onChange={(e) => handleAudioFile(e.target.files?.[0] ?? null)}
+                className="font-mono"
+              />
+            )}
+            {audioError && <p className="font-mono text-sm text-destructive">{audioError}</p>}
           </div>
 
           <div className="grid md:grid-cols-2 gap-8 items-start border-t-4 border-border pt-8">
