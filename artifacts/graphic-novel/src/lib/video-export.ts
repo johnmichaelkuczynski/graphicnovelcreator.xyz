@@ -158,39 +158,87 @@ export interface VideoExportResult {
   mimeType: string;
 }
 
-export async function exportNovelVideo(opts: VideoExportOptions): Promise<VideoExportResult> {
-  const {
-    title,
-    panels,
-    fps = 30,
-    width = 1080,
-    height = 1920,
-    onProgress,
-    audioBlob,
-    syncToAudio = !!opts.audioBlob,
-  } = opts;
-  let { secondsPerPanel = 3 } = opts;
+function hasWebCodecs(): boolean {
+  return (
+    typeof (globalThis as { VideoEncoder?: unknown }).VideoEncoder !== "undefined" &&
+    typeof (globalThis as { VideoFrame?: unknown }).VideoFrame !== "undefined" &&
+    typeof (globalThis as { AudioEncoder?: unknown }).AudioEncoder !== "undefined" &&
+    typeof (globalThis as { AudioData?: unknown }).AudioData !== "undefined"
+  );
+}
 
+export async function exportNovelVideo(opts: VideoExportOptions): Promise<VideoExportResult> {
+  const { title, panels } = opts;
   if (!panels.length) throw new Error("No completed panels to export.");
-  if (typeof MediaRecorder === "undefined") {
-    throw new Error("Your browser does not support video recording.");
+
+  // Decode audio up front so both code paths can use it and size the slideshow.
+  let audioBuffer: AudioBuffer | null = null;
+  if (opts.audioBlob) {
+    const audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+    const arrayBuf = await opts.audioBlob.arrayBuffer();
+    audioBuffer = await audioCtx.decodeAudioData(arrayBuf.slice(0));
+    audioCtx.close().catch(() => {});
   }
 
-  // Decode audio (if any) up front so we can size the slideshow against its duration.
-  let audioCtx: AudioContext | null = null;
-  let audioBuffer: AudioBuffer | null = null;
-  let audioDuration = 0;
-  if (audioBlob) {
-    audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-    const arrayBuf = await audioBlob.arrayBuffer();
-    audioBuffer = await audioCtx.decodeAudioData(arrayBuf.slice(0));
-    audioDuration = audioBuffer.duration;
-    if (syncToAudio) {
-      secondsPerPanel = Math.max(0.1, audioDuration / panels.length);
+  // Prefer WebCodecs — gives us a real MP4 with deterministic per-frame timestamps,
+  // bypassing the MediaRecorder MP4 bug that produced black/frozen video with audio
+  // (Chrome's MediaRecorder MP4 path mis-sequences manually-pushed canvas frames).
+  if (hasWebCodecs()) {
+    try {
+      return await exportViaWebCodecs(opts, audioBuffer);
+    } catch (err) {
+      console.warn("WebCodecs export failed, falling back to MediaRecorder:", err);
+      // Fall through to MediaRecorder.
     }
   }
+  return await exportViaMediaRecorder(opts, audioBuffer);
+}
 
-  const { mime, ext } = pickMime(!!audioBlob);
+// --- WebCodecs + mp4-muxer path ---------------------------------------------------
+//
+// We draw each frame into a 2D canvas, wrap it in a VideoFrame with an explicit
+// microsecond timestamp, and feed it straight to a hardware-accelerated H.264
+// VideoEncoder. Audio is sliced out of the decoded AudioBuffer into AudioData
+// chunks with matching timestamps and fed to an AAC AudioEncoder. mp4-muxer
+// then assembles a proper MP4 with both tracks correctly interleaved — no
+// MediaRecorder, no MediaStream timing drift, no black-frame surprises.
+
+interface WebCodecsGlobals {
+  VideoEncoder: typeof VideoEncoder;
+  VideoFrame: typeof VideoFrame;
+  AudioEncoder: typeof AudioEncoder;
+  AudioData: typeof AudioData;
+}
+
+async function exportViaWebCodecs(
+  opts: VideoExportOptions,
+  audioBuffer: AudioBuffer | null,
+): Promise<VideoExportResult> {
+  const { title, panels, fps = 30, width = 1080, height = 1920, onProgress } = opts;
+  const syncToAudio = opts.syncToAudio ?? !!audioBuffer;
+  let secondsPerPanel = opts.secondsPerPanel ?? 3;
+  if (audioBuffer && syncToAudio) {
+    secondsPerPanel = Math.max(0.1, audioBuffer.duration / panels.length);
+  }
+
+  const wc = globalThis as unknown as WebCodecsGlobals;
+  const mp4 = await import("mp4-muxer");
+  const target = new mp4.ArrayBufferTarget();
+  const muxer = new mp4.Muxer({
+    target,
+    fastStart: "in-memory",
+    video: { codec: "avc", width, height, frameRate: fps },
+    ...(audioBuffer
+      ? {
+          audio: {
+            codec: "aac" as const,
+            numberOfChannels: audioBuffer.numberOfChannels,
+            sampleRate: audioBuffer.sampleRate,
+          },
+        }
+      : {}),
+  });
+
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -199,43 +247,156 @@ export async function exportNovelVideo(opts: VideoExportOptions): Promise<VideoE
 
   const images = await Promise.all(panels.map((p) => loadImage(p.imageDataUrl)));
 
+  let encoderError: unknown = null;
+  const videoEncoder = new wc.VideoEncoder({
+    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    error: (e) => { encoderError = e; },
+  });
+  // avc1.42E01F = H.264 Baseline profile, Level 3.1 — universally playable
+  // (QuickTime, VLC, every browser, iOS/Android Photos, every NLE).
+  videoEncoder.configure({
+    codec: "avc1.42E01F",
+    width,
+    height,
+    bitrate: 8_000_000,
+    framerate: fps,
+  });
+
+  const framesPerPanel = Math.max(1, Math.round(secondsPerPanel * fps));
+  const totalFrames = framesPerPanel * panels.length;
+  const frameDurationUs = Math.round(1_000_000 / fps);
+  const keyframeEvery = fps * 2; // 2-second GOP
+
+  let frameIdx = 0;
+  for (let i = 0; i < panels.length; i++) {
+    for (let f = 0; f < framesPerPanel; f++) {
+      drawFrame(ctx, width, height, images[i], panels[i].caption, i, panels.length);
+      const timestamp = frameIdx * frameDurationUs;
+      const frame = new wc.VideoFrame(canvas, { timestamp, duration: frameDurationUs });
+      videoEncoder.encode(frame, { keyFrame: frameIdx % keyframeEvery === 0 });
+      frame.close();
+      frameIdx++;
+      if (onProgress) onProgress((frameIdx / totalFrames) * (audioBuffer ? 0.85 : 1.0));
+      // Yield occasionally so the UI stays responsive and the encoder queue can drain.
+      if (frameIdx % 15 === 0) await new Promise((r) => setTimeout(r, 0));
+      if (encoderError) throw encoderError;
+    }
+  }
+  await videoEncoder.flush();
+  videoEncoder.close();
+  if (encoderError) throw encoderError;
+
+  if (audioBuffer) {
+    const audioEncoder = new wc.AudioEncoder({
+      output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+      error: (e) => { encoderError = e; },
+    });
+    audioEncoder.configure({
+      codec: "mp4a.40.2", // AAC-LC
+      numberOfChannels: audioBuffer.numberOfChannels,
+      sampleRate: audioBuffer.sampleRate,
+      bitrate: 192_000,
+    });
+
+    const CHUNK = 1024;
+    const channels = audioBuffer.numberOfChannels;
+    const sr = audioBuffer.sampleRate;
+    const totalSamples = audioBuffer.length;
+    const chData: Float32Array[] = [];
+    for (let c = 0; c < channels; c++) chData.push(audioBuffer.getChannelData(c));
+
+    for (let offset = 0; offset < totalSamples; offset += CHUNK) {
+      const numberOfFrames = Math.min(CHUNK, totalSamples - offset);
+      // f32-planar: all of channel 0, then all of channel 1, etc.
+      const planar = new Float32Array(numberOfFrames * channels);
+      for (let c = 0; c < channels; c++) {
+        planar.set(chData[c].subarray(offset, offset + numberOfFrames), c * numberOfFrames);
+      }
+      const timestamp = Math.round((offset / sr) * 1_000_000);
+      const ad = new wc.AudioData({
+        format: "f32-planar",
+        sampleRate: sr,
+        numberOfFrames,
+        numberOfChannels: channels,
+        timestamp,
+        data: planar,
+      });
+      audioEncoder.encode(ad);
+      ad.close();
+      if (encoderError) throw encoderError;
+    }
+    await audioEncoder.flush();
+    audioEncoder.close();
+    if (encoderError) throw encoderError;
+    if (onProgress) onProgress(1);
+  }
+
+  muxer.finalize();
+  const blob = new Blob([target.buffer], { type: "video/mp4" });
+  const safeTitle = (title || "novel").replace(/[^a-z0-9_-]+/gi, "_").slice(0, 60) || "novel";
+  return { blob, filename: `${safeTitle}.mp4`, mimeType: "video/mp4" };
+}
+
+// --- MediaRecorder fallback (Firefox/Safari without WebCodecs) --------------------
+//
+// Kept as a safety net; produces WebM (which is what those browsers can reliably
+// encode). Most users on Chrome/Edge never reach this path.
+
+async function exportViaMediaRecorder(
+  opts: VideoExportOptions,
+  audioBuffer: AudioBuffer | null,
+): Promise<VideoExportResult> {
+  const { title, panels, fps = 30, width = 1080, height = 1920, onProgress } = opts;
+  const syncToAudio = opts.syncToAudio ?? !!audioBuffer;
+  let secondsPerPanel = opts.secondsPerPanel ?? 3;
+  let audioDuration = 0;
+  if (audioBuffer) {
+    audioDuration = audioBuffer.duration;
+    if (syncToAudio) secondsPerPanel = Math.max(0.1, audioDuration / panels.length);
+  }
+
+  if (typeof MediaRecorder === "undefined") {
+    throw new Error("Your browser does not support video recording.");
+  }
+
+  // Re-create an AudioContext for the MediaStream path (decoded buffer is reusable).
+  const audioCtx = audioBuffer
+    ? new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
+    : null;
+
+  const { mime, ext } = pickMime(!!audioBuffer);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not create canvas context.");
+
+  const images = await Promise.all(panels.map((p) => loadImage(p.imageDataUrl)));
   drawFrame(ctx, width, height, images[0], panels[0].caption, 0, panels.length);
 
-  // Build the combined media stream: canvas video + (optionally) decoded audio.
-  // We use captureStream(0) instead of captureStream(fps) so the browser does NOT
-  // auto-poll the canvas on its own timer. Auto-polling causes a fatal failure mode
-  // with the MP4/H.264 encoder: when the canvas isn't repainted between auto-captures,
-  // Chromium fails to emit keyframes, producing a video file with valid audio but
-  // entirely BLACK frames (the WebM/VP9 encoder tolerated this; H.264 does not).
-  // With (0) we push every frame ourselves via track.requestFrame() right after
-  // drawing, so the encoder always sees a fresh, timestamped, dirty canvas.
   const videoStream = canvas.captureStream(0);
   const videoTrack = videoStream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined;
   if (!videoTrack) throw new Error("Could not create video track from canvas.");
   const tracks: MediaStreamTrack[] = [videoTrack];
   let audioSource: AudioBufferSourceNode | null = null;
-  let audioDest: MediaStreamAudioDestinationNode | null = null;
   if (audioCtx && audioBuffer) {
-    audioDest = audioCtx.createMediaStreamDestination();
+    const dest = audioCtx.createMediaStreamDestination();
     audioSource = audioCtx.createBufferSource();
     audioSource.buffer = audioBuffer;
-    audioSource.connect(audioDest);
-    tracks.push(...audioDest.stream.getAudioTracks());
+    audioSource.connect(dest);
+    tracks.push(...dest.stream.getAudioTracks());
   }
   const combinedStream = new MediaStream(tracks);
 
-  const recorderOpts: MediaRecorderOptions = {
+  const recorder = new MediaRecorder(combinedStream, {
     videoBitsPerSecond: 8_000_000,
     ...(audioCtx ? { audioBitsPerSecond: 192_000 } : {}),
     ...(mime ? { mimeType: mime } : {}),
-  };
-  const recorder = new MediaRecorder(combinedStream, recorderOpts);
+  });
   const chunks: Blob[] = [];
   recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-
   const stopped = new Promise<void>((resolve) => { recorder.onstop = () => resolve(); });
-  // AudioContexts can start "suspended" under browser autoplay rules; without resume(), the
-  // MediaStreamAudioDestinationNode emits silence and we'd ship a video with no audio.
+
   if (audioCtx && audioCtx.state === "suspended") {
     try { await audioCtx.resume(); } catch { /* best effort */ }
   }
@@ -246,19 +407,9 @@ export async function exportNovelVideo(opts: VideoExportOptions): Promise<VideoE
   const totalFrames = framesPerPanel * panels.length;
   const frameInterval = 1000 / fps;
 
-  // Seed the encoder with a couple of identical frames so the first keyframe lands
-  // before any audio samples — some Chromium builds drop the first ~50ms otherwise.
-  drawFrame(ctx, width, height, images[0], panels[0].caption, 0, panels.length);
-  if (typeof videoTrack.requestFrame === "function") videoTrack.requestFrame();
-  await new Promise((r) => setTimeout(r, frameInterval));
-
   let frameCount = 0;
   for (let i = 0; i < panels.length; i++) {
     for (let f = 0; f < framesPerPanel; f++) {
-      // Redraw every single frame even though the underlying image is unchanged.
-      // This marks the canvas dirty so the requestFrame() call below actually
-      // emits a new sample to the encoder; without it H.264 silently produces
-      // an all-black file when nothing repaints between captures.
       drawFrame(ctx, width, height, images[i], panels[i].caption, i, panels.length);
       if (typeof videoTrack.requestFrame === "function") videoTrack.requestFrame();
       await new Promise((r) => setTimeout(r, frameInterval));
@@ -267,35 +418,26 @@ export async function exportNovelVideo(opts: VideoExportOptions): Promise<VideoE
     }
   }
 
-  // If audio is longer than the rendered slideshow (rounding error or panels too few),
-  // hold the last frame until the audio finishes so nothing is cut off.
   if (audioDuration > 0) {
     const elapsedSec = (framesPerPanel * panels.length) / fps;
     const remainingMs = Math.max(0, (audioDuration - elapsedSec) * 1000);
     if (remainingMs > 0) await new Promise((r) => setTimeout(r, remainingMs));
   }
-
   await new Promise((r) => setTimeout(r, 200));
+
   try {
     try { audioSource?.stop(); } catch { /* already stopped */ }
     recorder.stop();
     await stopped;
   } finally {
-    // Always release media tracks and the AudioContext, even if recorder/stop misbehaves.
     combinedStream.getTracks().forEach((t) => { try { t.stop(); } catch { /* noop */ } });
     videoStream.getTracks().forEach((t) => { try { t.stop(); } catch { /* noop */ } });
     if (audioCtx) await audioCtx.close().catch(() => {});
   }
 
-  // Use the actual recorded type if available — MediaRecorder may downgrade to WebM even when
-  // an MP4 mime was requested, and we want the file extension to reflect reality.
   const actualType = chunks[0]?.type || mime || "video/webm";
   const blob = new Blob(chunks, { type: actualType });
   const finalExt = extFromBlobType(actualType, ext);
   const safeTitle = (title || "novel").replace(/[^a-z0-9_-]+/gi, "_").slice(0, 60) || "novel";
-  const filename = `${safeTitle}.${finalExt}`;
-  // Caller decides what to do with the blob (persist to IndexedDB, prompt save dialog, etc.)
-  // No more silent <a download> — the previous behavior dumped files into the OS Downloads
-  // folder with no in-app trace, which left users wondering where the export went.
-  return { blob, filename, mimeType: actualType };
+  return { blob, filename: `${safeTitle}.${finalExt}`, mimeType: actualType };
 }
