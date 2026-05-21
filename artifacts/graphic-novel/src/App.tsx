@@ -11,6 +11,7 @@ import ScreenplayNew from "@/pages/screenplay-new";
 import ScreenplayDetail from "@/pages/screenplay-detail";
 import ImageNovelNew from "@/pages/image-novel-new";
 import Refine from "@/pages/refine";
+import Diagnostics from "@/pages/diagnostics";
 
 const queryClient = new QueryClient();
 
@@ -24,6 +25,7 @@ function Router() {
       <Route path="/screenplay/:id" component={ScreenplayDetail} />
       <Route path="/image-novel" component={ImageNovelNew} />
       <Route path="/refine" component={Refine} />
+      <Route path="/diagnostics" component={Diagnostics} />
       <Route component={NotFound} />
     </Switch>
   );

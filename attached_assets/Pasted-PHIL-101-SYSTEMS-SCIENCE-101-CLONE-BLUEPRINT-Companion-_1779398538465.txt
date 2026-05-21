@@ -1,0 +1,224 @@
+PHIL-101 / SYSTEMS SCIENCE 101 — CLONE BLUEPRINT
+Companion to BLUEPRINT.md. This document is for one job: cloning this app to spin up another course in the same series, keeping the entire integrity + diagnostics stack and swapping out the course content.
+
+Read order: skim this whole file, then read the two source files this document is built on:
+
+artifacts/api-server/src/routes/diagnostics.ts (the system check)
+artifacts/api-server/src/lib/functionalCheck.ts (the end-to-end check)
+═══════════════════════════════════════════════════════════════════════════════ WHAT YOU'RE CLONING (AND WHAT YOU'RE NOT) ═══════════════════════════════════════════════════════════════════════════════
+
+KEEP, untouched (the chassis): • The Integrity Canvas (Box 2 editor + paste-block + keystroke log + real-time GPTZero + sentence highlighting + traffic-light bar + cumulative-red warning) • The Draft Workshop (Box 1 single-shot AI feedback that locks) • The Process-Forensics analyzer (11 features, n=2 baseline freeze, score + class), wired into POST /submissions • The two-layer detection: GPTZero (synchronic) + Process Forensics (diachronic) • Sequential gating on POST /submissions • The Admin panel: list, detail with sparkline + activity report + forensics view, accommodation toggle, review actions • The Diagnostics page and both endpoints — this is the regression suite you'll run after each clone • The Tutor (Anthropic SSE, per-module conversation) • The integrity disclosure modal (one-time gate) • All shadcn/ui primitives, the page shell, the nav, the auth flow
+
+SWAP, per course (the content): • Curriculum text — both copies of curriculum.ts (server: artifacts/api-server/src/lib/curriculum.ts, client: artifacts/phil-101/src/data/curriculum.ts) • Module list: ids, numbers, titles, reading, assignments, model responses. Keep the Module interface shape unchanged. Keep the convention d1, e1, d2, e2, …, tp unless your course genuinely has a different rhythm — and if you change ids, audit every grep hit (see "Hardcoded module-id sites" below). • Course identity strings: - Artifact title in artifacts/phil-101/artifact.toml (use the artifacts skill, not a hand edit) - The course name on the Start Here landing page (artifacts/phil-101/src/pages/start-here.tsx) - The page in artifacts/phil-101/index.html - The footer copy in artifacts/phil-101/src/components/page-shell.tsx - The header of the copy-to-clipboard diagnostic report (artifacts/phil-101/src/pages/diagnostics.tsx line ~365: === Systems Science 101 — Diagnostics Report ===) - The header comment of artifacts/api-server/src/lib/curriculum.ts (currently misleadingly says "Psych_101") • The contents of attached_assets/ (course book source, branding images). The attached_assets/ directory is NOT served by the web server — use the @assets/ Vite alias or copy into public/.
+
+DO NOT TOUCH when cloning: • The DB schema (lib/db/src/schema/*). All courses share the schema shape. If you actually need multi-course data isolation, that's a separate per-course Postgres DB (different DATABASE_URL), not a schema change. • The synthetic diagnostic builders in routes/diagnostics.ts lines 269–429 — they are course-agnostic. • The end-to-end check's reference module id d1 — if you keep the d1, e1, … convention this is correct as-is; if you don't, see "Adapting the end-to-end check to new module ids" below.
+
+═══════════════════════════════════════════════════════════════════════════════ THE CLONE PROCEDURE (STEP-BY-STEP) ═══════════════════════════════════════════════════════════════════════════════
+
+Fork the Repl (Replit "Fork" — keeps the whole monorepo).
+
+Stand up a new database. Easiest: create a fresh Neon project and put the new DATABASE_URL in the new Repl's secrets. Then: pnpm --filter @workspace/db run push. The system check's "Database schema" row should flip to PASS with 8 tables.
+
+Re-provision the secrets in the new Repl (use the environment-secrets skill — never copy values into source):
+
+DATABASE_URL (fresh Neon URL from step 2)
+SESSION_SECRET (new random string; do NOT reuse — sharing it makes cookies cross-valid between courses)
+GPTZERO_API_KEY (the existing org key works for any course; rate limit is per key)
+ANTHROPIC_API_KEY (or use the Replit-managed AI_INTEGRATIONS_ANTHROPIC_API_KEY)
+Swap the curriculum in BOTH files:
+
+artifacts/api-server/src/lib/curriculum.ts
+artifacts/phil-101/src/data/curriculum.ts Keep the exported names (modules, Module). Keep the type literals ("discussion" | "essay" | "termpaper"). Keep ids in curriculum order — the first id in the array is the first module a student can submit.
+Swap the course-identity strings at the 5 sites listed above.
+
+Update the artifact title via the artifacts skill so the preview dropdown reads the new course name.
+
+Drop a fresh attached_assets/<course>_Course_Book.docx (the verbatim source you regenerated curriculum from). Add a header comment in both curriculum.ts files pointing at it.
+
+Run the diagnostics page (/diagnostics). Expected:
+
+System check: all 8 rows PASS in ≈3–5 s end-to-end.
+End-to-end check: 9 steps PASS (7 walk steps + tear-down + the implicit overall). If any step FAILs, it's almost always one of: missing GPTZero/Anthropic key, DB not pushed, or you renamed module d1 and forgot to update functionalCheck.ts (see below).
+Smoke-test as a real student: log in fresh, ack integrity, do a small d1 submission, watch GPTZero score appear within ~2.5 s of submit, then check the admin panel reflects the new row.
+
+Lock down before launch (carry the same TODO from the source repo): wrap /diagnostics in <RequireAuth> and add requireAuth/requireAdmin to routes/diagnostics.ts. The end-to-end check writes to the DB and pings GPTZero, so leaving it public is an abuse vector.
+
+═══════════════════════════════════════════════════════════════════════════════ HARDCODED MODULE-ID SITES (audit these if you change ids) ═══════════════════════════════════════════════════════════════════════════════
+
+If you keep d1, e1, d2, e2, d3, e3, d4, e4, d5, e5, d6, d7, tp, do nothing. If you change them:
+
+• Both curriculum.ts files — the canonical list. • artifacts/api-server/src/lib/functionalCheck.ts - line 138: GET /tutor/d1/conversation - line 157: POST /canvas/d1/autosave - line 189: POST /submissions with moduleId: "e1" (out-of-order probe — must be the SECOND module in curriculum order) - line 219: POST /submissions with moduleId: "d1" (the real submit — must be the FIRST module in curriculum order) - line 249: GET /submissions/module/d1 - line 277: list-contains assertion looks for s.moduleId === "d1" • artifacts/phil-101/src/components/nav.tsx - "General Tutor" link points to /tutor/d1. Update to whatever your first-module id is (it's just a default landing target).
+
+In other words: the end-to-end check has TWO module-id constants hardcoded — the first module (used 4 times) and the second module (used once as the out-of-order probe). If you keep the d1/e1 convention, leave it. Otherwise, do a single find-and-replace.
+
+═══════════════════════════════════════════════════════════════════════════════ THE SYSTEM CHECK — DETAILED SPEC ═══════════════════════════════════════════════════════════════════════════════
+
+Route: GET /api/diagnostics Source: artifacts/api-server/src/routes/diagnostics.ts, line 42 Auth: PUBLIC during beta (must be gated for production) Output shape:
+
+{
+  overall: "pass" | "warn" | "fail",
+  timestamp: string,                // ISO
+  checks: Array<{
+    name: string,
+    status: "pass" | "warn" | "fail",
+    ms: number,                     // wall time of the check
+    detail: string,                 // friendly one-line explanation
+  }>
+}
+
+overall is pass iff every check is pass, fail if any is fail, otherwise warn. UI banner colors match.
+
+The 8 checks, in order they run:
+
+#	Name	Where in file	Asserts	Failure mode
+1	Server	~line 60	Process is up; reports Node version, NODE_ENV, uptime	Cannot fail — if the process is down, the HTTP call itself fails and the page shows the red "Could not reach backend" banner instead.
+2	Environment variables	~line 69	DATABASE_URL and ANTHROPIC_API_KEY are set	FAIL if either is missing. PORT/NODE_ENV/SESSION_SECRET/GPTZERO_API_KEY are reported but not gated here.
+3	Database (Postgres)	~line 82	SELECT 1 round-trips	FAIL on bad URL, dead DB, or network/SSL issue. Detail string is the raw error message.
+4	Database schema	~line 104	information_schema.tables WHERE schema='public' count > 0	FAIL if 0 tables. Detail tells the operator to run pnpm --filter @workspace/db run push.
+5	Anthropic API	~line 133	claude-sonnet-4-5 round-trip with max_tokens: 8 and prompt "Say OK"	FAIL on missing key (skipped without call), bad key (401), or rate-limit (429). Note: 429 counts as FAIL here, not WARN.
+6	GPTZero API	~line 166	checkWithGPTZero(sample) returns a non-null {aiScore, aiClass}	WARN if key not set (allows submissions to still succeed with aiStatus="failed"). FAIL on network error or null result.
+7	Process forensics — synthetic transcription	~line 206	analyzeProcess(buildTranscriptionStream()) → score ≥ 70, class likelyAI	FAIL means someone tuned WEIGHTS in processForensics.ts and broke the transcription detector. Margin from 70 is small — be careful.
+8	Process forensics — synthetic composition	~line 220	analyzeProcess(buildCompositionStream()) → score < 35, class human	FAIL means tuning broke the human detector. Composition stream is deterministic (seeded LCG) so it cannot be flaky.
+Why these checks and not others:
+
+Step 5 uses a real billed call (8 tokens, ≈$0.0001). It's the cheapest possible round-trip that proves the key is accepted, not just present. Do not downgrade to a presence-only check.
+Step 6 uses a real GPTZero call for the same reason. Sample text is ~150 chars. Cost per ping is one GPTZero unit.
+Steps 7–8 are pure-function tests — no I/O, no external deps. They're the regression suite for the forensics analyzer. Synthetic streams are intentionally extreme so the margin is big enough to survive minor tuning. The composition stream uses a seeded LCG (seed = 0xc0ffee) so the same input → same output every run.
+How to add a check (template — paste before the overall = line):
+
+// 9. Your new check
+{
+  const r = await timed(async () => /* the thing you're verifying */);
+  checks.push({
+    name: "Your new check",
+    status: r.error ? "fail" : "pass",   // or "warn" — see step 6
+    ms: r.ms,
+    detail: r.error ? errMsg(r.error) : "what passed and why",
+  });
+}
+
+Reuse the timed() and errMsg() helpers. Keep detail to a single line — it has to fit in the copy-pastable report.
+
+═══════════════════════════════════════════════════════════════════════════════ THE END-TO-END CHECK — DETAILED SPEC ═══════════════════════════════════════════════════════════════════════════════
+
+Route: POST /api/diagnostics/functional Source: artifacts/api-server/src/lib/functionalCheck.ts (the walk), plumbed through routes/diagnostics.ts line 255 (the route). Auth: PUBLIC during beta (must be gated for production). Output shape:
+
+{
+  overall: "pass" | "fail",          // no "warn" tier here
+  timestamp: string,
+  steps: Array<{
+    name: string,
+    status: "pass" | "fail",
+    ms: number,
+    detail: string,
+  }>
+}
+
+How it works (in one paragraph). The handler imports runFunctionalCheck(), which uses Node's built-in fetch() to call the API on http://127.0.0.1:${PORT}/api — i.e. the same Express process it lives in, over loopback. This means every step exercises the real HTTP stack: cookies, sessions, middleware, validation, route handlers, DB writes. No mocking. The walk creates a synthetic student with email bot+<timestamp>-<uuid>@diagnostic.test, runs 7 steps in order, then in a finally block deletes the student row. Every other table has ON DELETE CASCADE to students, so one DELETE removes canvas sessions, drafts, tutor conversations, tutor messages, and submissions in one transaction.
+
+Why loopback and not direct function calls? Because the goal is to assert the contract of the API — status codes, response shapes, cookie-based auth — not just that the underlying database code works. A direct function call would skip the session middleware, the JSON parser, the routes layer, and the serialization step that strips forensic columns from student-facing responses. Loopback catches regressions in any of those layers.
+
+The 7 walk steps, in order:
+
+#	Name	Endpoint	What it asserts
+1	Sign in (creates a session)	POST /auth/login	Login succeeds; response carries a Set-Cookie; a student id is returned. The cookie is parsed and used on every subsequent step.
+2	Acknowledge integrity disclosure	POST /integrity/ack	The ack endpoint accepts the call (200 or 204). Without this, the module page's gate would refuse to open.
+3	Open tutor conversation	GET /tutor/d1/conversation	Reads the per-student×module conversation (creates an empty one on first call). Pure GET — does NOT call Anthropic.
+4	Save in-progress draft (autosave)	POST /canvas/d1/autosave	204 No Content. Upserts a canvas_sessions row with content + empty keystroke + scoreHistory blobs.
+5	Sequential gating blocks out-of-order submit	POST /submissions (moduleId="e1")	Asserts HTTP 403. This is the load-bearing check that the gate cannot be bypassed by anyone with a session.
+6	Submit module d1	POST /submissions (moduleId="d1")	The real submit. 200 with a new submission id. Sets the row up so the fire-and-forget GPTZero check runs in the background.
+7a	Module page reflects the new submission	GET /submissions/module/d1	The single-module GET (used by the module page) returns the row we just made.
+7b	Assessments list contains the new submission	GET /submissions	The global list (used by the Assessments page) contains a row with moduleId === "d1".
+8	Tear down synthetic test data	(DB DELETE, not HTTP)	Always runs (top-level try/finally). Deletes the student row; FK CASCADE handles the rest. PASS reports the cascade scope.
+Cleanup contract — read this carefully. The walk function wraps its entire body in try { … } catch { … } and always calls finish(steps, studentId) at the end. finish() runs the DELETE inside its own try/catch, appends the tear-down step result, and computes overall. The only way a synthetic student row leaks is if the DELETE itself throws — and that case is logged via pino with the studentId. Do not refactor this to move the DELETE before the report. The DELETE-last ordering is what makes the tear-down step appear in the report.
+
+Things the end-to-end check intentionally does NOT do:
+
+No SSE tutor message (would burn Anthropic credits per click).
+No draft feedback (same reason).
+No process-forensics submission (sends empty keystroke/scoreHistory arrays — the analyzer is gated on ≥20 events AND ≥80 chars, so it is correctly skipped).
+No inline AI action (Anthropic again). The system check above is what verifies Anthropic and GPTZero are reachable; this check is purely about the formal app round-trip.
+Estimated cost per click: one fire-and-forget GPTZero call (from the background runAICheck triggered by step 6 — happens after the walk completes, in the background). Zero Anthropic calls. Zero persistent DB rows.
+
+Estimated duration: ~1.5–3 s on a warm server (most of it is loopback HTTP overhead and one Postgres delete).
+
+═══════════════════════════════════════════════════════════════════════════════ DIAGNOSTICS PAGE UI (/diagnostics) ═══════════════════════════════════════════════════════════════════════════════
+
+Source: artifacts/phil-101/src/pages/diagnostics.tsx (402 lines).
+
+Three cards on the page, top to bottom:
+
+Card 1: System check — header has "Run diagnostics" button and (once a report exists) a "Copy report" button. Body renders an OverallBanner + a list of CheckRow per check. Cannot reach backend? Renders a friendly red banner with the HTTP error.
+
+Card 2: End-to-end functional check — header has "Run end-to-end check" button. Body renders the same OverallBanner + CheckRow components (the StepResult shape is intentionally a subset of the Check shape so they compose without a second renderer).
+
+Card 3: What each check means — static copy explaining each system-check row in plain language for the instructor.
+
+The copy-report button (buildReportText, line 349) produces a single text block containing BOTH the system check report AND the end-to-end report, with browser/page/timestamp metadata, ready to paste into a support email. The header line is hardcoded — "=== Systems Science 101 — Diagnostics Report ===" at line 365 — swap it per course.
+
+Initial UX: the page does NOT auto-run anymore (it used to; useState(false) for running means it sits idle until the instructor clicks). If you want auto-run, add a useEffect(() => { void run(); }, []). Auto-run is useful for course launch checks; for beta we left it manual because the instructor's first click was duplicating the load.
+
+═══════════════════════════════════════════════════════════════════════════════ WHAT BREAKS A CLONE (THE FAILURE MODES YOU WILL ACTUALLY HIT) ═══════════════════════════════════════════════════════════════════════════════
+
+Forgot to push the schema. System check row 4 FAILs with "0 tables". Fix: pnpm --filter @workspace/db run push.
+
+DATABASE_URL points at the source course's DB. Worst case — two courses share submissions. Always provision a fresh Neon project for each course.
+
+Renamed d1 → something else in curriculum but not in functionalCheck.ts. End-to-end check step 3 fails with 404 on GET /tutor/<oldid>/conversation, OR step 6 fails because the student tries to submit before completing the (renamed) prior module. Fix: update the 6 references listed above.
+
+Curriculum array order changed without changing ids. The sequential gate uses curriculum array order, not id-string sort. If your new curriculum's first id is "p1" but the second is "p2", change step 5's moduleId: "e1" to "p2" and step 6's moduleId: "d1" to "p1".
+
+Process-forensics test fails after a curriculum unrelated change. This shouldn't happen; the synthetic builders are pure and seeded. If it does, someone touched WEIGHTS in processForensics.ts — revert or retune so both synthetics pass with margin.
+
+GPTZero key works but quota exhausted. System check row 6 returns "request returned null" because checkWithGPTZero swallows non-2xx responses and returns null. Detail text tells you to check server logs (where pino logged the upstream error).
+
+Anthropic key works for tutor but step 5 in the system check fails with 429. The model is rate-limited at the org level. The system check doesn't downgrade 429 to WARN like the original model_wiz blueprint did — it fails. If you want WARN behavior, check the error shape in the catch and special-case 429.
+
+End-to-end check leaves a bot+…@diagnostic.test student in the DB. Only possible if the final DELETE itself threw (logged via pino). Run DELETE FROM students WHERE email LIKE 'bot+%@diagnostic.test' to clean up. Then investigate the pino error.
+
+═══════════════════════════════════════════════════════════════════════════════ QUICK REFERENCE — WHERE THINGS LIVE ═══════════════════════════════════════════════════════════════════════════════
+
+ROUTE                                       FILE                                                  LINE
+GET  /api/diagnostics                       artifacts/api-server/src/routes/diagnostics.ts        42
+POST /api/diagnostics/functional            artifacts/api-server/src/routes/diagnostics.ts        255
+runFunctionalCheck() (walk)                 artifacts/api-server/src/lib/functionalCheck.ts       71
+  step 1: login                                                                                   78
+  step 2: integrity ack                                                                          118
+  step 3: tutor conversation GET                                                                 135
+  step 4: canvas autosave                                                                        154
+  step 5: sequential gating (must 403)                                                           181
+  step 6: submit d1                                                                              212
+  step 7a: GET /submissions/module/d1                                                            246
+  step 7b: GET /submissions                                                                      269
+  finish() (tear down + report)                                                                  304
+Synthetic stream builders (forensics)       artifacts/api-server/src/routes/diagnostics.ts       269
+  buildTranscriptionStream()                                                                     278
+  buildCompositionStream()                                                                       309
+Diagnostics page UI                         artifacts/phil-101/src/pages/diagnostics.tsx          1
+  run() — system check fetch                                                                      44
+  runFunctional() — E2E fetch                                                                     89
+  buildReportText() — copy-to-clipboard                                                          349
+  course-name header to swap                                                                     365
+Curriculum (SWAP per course)
+  server                                    artifacts/api-server/src/lib/curriculum.ts            1
+  client                                    artifacts/phil-101/src/data/curriculum.ts             1
+Other course-identity strings to swap
+  landing page                              artifacts/phil-101/src/pages/start-here.tsx           —
+  HTML <title>                              artifacts/phil-101/index.html                         —
+  footer                                    artifacts/phil-101/src/components/page-shell.tsx      —
+  artifact title (via artifacts skill)      artifacts/phil-101/artifact.toml                      —
+  nav default tutor link                    artifacts/phil-101/src/components/nav.tsx             —
+
+═══════════════════════════════════════════════════════════════════════════════ RUN ═══════════════════════════════════════════════════════════════════════════════
+
+Two workflows, both registered by the artifacts:
+
+artifacts/api-server: API Server pnpm --filter @workspace/api-server run dev artifacts/phil-101: web pnpm --filter @workspace/phil-101 run dev
+
+Verify a clone:
+
+Open /diagnostics in the web preview.
+Click "Run diagnostics" — expect 8 PASS rows.
+Click "Run end-to-end check" — expect 8 PASS rows (7 walk + tear-down).
+Click "Copy report", paste somewhere; confirm course-name header reads the new course name.
+If all three steps pass, the clone is structurally sound. Smoke-test with one real submission before opening enrollment.
