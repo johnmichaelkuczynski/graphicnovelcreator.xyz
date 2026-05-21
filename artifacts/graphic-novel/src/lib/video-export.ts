@@ -100,56 +100,68 @@ function drawFrame(
   panelIdx: number,
   totalPanels: number,
 ) {
-  ctx.fillStyle = "#f4ede0";
+  // Fill the entire frame with black first so any letterboxing (if the image's aspect
+  // ratio somehow doesn't match) shows as black bars rather than the old beige paper.
+  ctx.fillStyle = "#000000";
   ctx.fillRect(0, 0, W, H);
 
+  // Draw the panel image edge-to-edge using "cover" semantics: scale to fill the
+  // whole frame, crop the overflow. This means the image takes up the entire 1080x1920
+  // viewport with no margins — the caption is overlaid on top.
+  const coverScale = Math.max(W / img.width, H / img.height);
+  const drawW = img.width * coverScale;
+  const drawH = img.height * coverScale;
+  const drawX = (W - drawW) / 2;
+  const drawY = (H - drawH) / 2;
+  ctx.drawImage(img, drawX, drawY, drawW, drawH);
+
+  // Caption sits as an overlay at the top of the frame, with a semi-opaque white
+  // backing so it stays readable over any image.
   const pad = Math.round(W * 0.05);
   const captionBoxX = pad;
   const captionBoxY = pad;
   const captionBoxW = W - pad * 2;
 
   ctx.font = `600 ${Math.round(W * 0.045)}px Georgia, "Playfair Display", serif`;
-  ctx.fillStyle = "#1a1a1a";
   ctx.textBaseline = "top";
 
   const lineHeight = Math.round(W * 0.06);
   const lines = caption ? wrapText(ctx, caption, captionBoxW - pad * 2) : [];
-  const captionBoxH = Math.max(lineHeight * 2, lines.length * lineHeight + pad * 1.2);
+  const captionBoxH = lines.length > 0
+    ? lines.length * lineHeight + pad * 1.2
+    : 0;
 
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(captionBoxX, captionBoxY, captionBoxW, captionBoxH);
-  ctx.strokeStyle = "#1a1a1a";
-  ctx.lineWidth = Math.max(4, W * 0.005);
-  ctx.strokeRect(captionBoxX, captionBoxY, captionBoxW, captionBoxH);
+  if (captionBoxH > 0) {
+    ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+    ctx.fillRect(captionBoxX, captionBoxY, captionBoxW, captionBoxH);
+    ctx.strokeStyle = "#1a1a1a";
+    ctx.lineWidth = Math.max(4, W * 0.005);
+    ctx.strokeRect(captionBoxX, captionBoxY, captionBoxW, captionBoxH);
 
-  ctx.fillStyle = "#1a1a1a";
-  lines.forEach((ln, i) => {
-    ctx.fillText(ln, captionBoxX + pad * 0.6, captionBoxY + pad * 0.6 + i * lineHeight);
-  });
+    ctx.fillStyle = "#1a1a1a";
+    lines.forEach((ln, i) => {
+      ctx.fillText(ln, captionBoxX + pad * 0.6, captionBoxY + pad * 0.6 + i * lineHeight);
+    });
+  }
 
-  const imgBoxY = captionBoxY + captionBoxH + pad;
-  const imgBoxX = pad;
-  const imgBoxW = W - pad * 2;
-  const imgBoxH = H - imgBoxY - pad * 2.5;
-
-  ctx.fillStyle = "#222";
-  ctx.fillRect(imgBoxX, imgBoxY, imgBoxW, imgBoxH);
-
-  const scale = Math.min(imgBoxW / img.width, imgBoxH / img.height);
-  const drawW = img.width * scale;
-  const drawH = img.height * scale;
-  const drawX = imgBoxX + (imgBoxW - drawW) / 2;
-  const drawY = imgBoxY + (imgBoxH - drawH) / 2;
-  ctx.drawImage(img, drawX, drawY, drawW, drawH);
-
-  ctx.strokeStyle = "#1a1a1a";
-  ctx.lineWidth = Math.max(4, W * 0.005);
-  ctx.strokeRect(imgBoxX, imgBoxY, imgBoxW, imgBoxH);
-
-  ctx.fillStyle = "#1a1a1a";
+  // Page indicator pill in the bottom-left, on its own readable backing so it
+  // doesn't get lost over busy artwork.
   ctx.font = `700 ${Math.round(W * 0.028)}px "Courier New", monospace`;
   ctx.textBaseline = "alphabetic";
-  ctx.fillText(`${panelIdx + 1} / ${totalPanels}`, pad, H - pad * 0.8);
+  const counter = `${panelIdx + 1} / ${totalPanels}`;
+  const counterW = ctx.measureText(counter).width;
+  const counterPadX = pad * 0.4;
+  const counterPadY = pad * 0.3;
+  const counterH = Math.round(W * 0.04);
+  const counterX = pad;
+  const counterY = H - pad - counterH;
+  ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+  ctx.fillRect(counterX, counterY, counterW + counterPadX * 2, counterH);
+  ctx.strokeStyle = "#1a1a1a";
+  ctx.lineWidth = Math.max(3, W * 0.004);
+  ctx.strokeRect(counterX, counterY, counterW + counterPadX * 2, counterH);
+  ctx.fillStyle = "#1a1a1a";
+  ctx.fillText(counter, counterX + counterPadX, counterY + counterH - counterPadY);
 }
 
 export interface VideoExportResult {
