@@ -753,7 +753,10 @@ async function exportViaMediaRecorder(
   // rAF is the primary scheduler; a 50 ms setInterval is a safety net for
   // when rAF is paused (e.g. minimized window / cross-origin iframe with no
   // visibility), guaranteeing we still terminate at expectedDurationSec.
-  let lastDrawnIdx = 0;
+  // Crossfade duration: ~0.6 s, but never more than 1/3 of a panel so very
+  // short panels still have a recognisable hold phase before dissolving.
+  const transitionSec = Math.min(0.6, secondsPerPanel / 3);
+
   await new Promise<void>((resolve) => {
     let done = false;
     // Single-flight scheduling guards: at most one rAF and one timeout in
@@ -776,9 +779,29 @@ async function exportViaMediaRecorder(
         panels.length - 1,
         Math.floor(elapsedSec / secondsPerPanel),
       );
-      if (idx !== lastDrawnIdx) {
+      // Where we are inside the current panel's slot, 0 .. secondsPerPanel.
+      const tIntoPanel = elapsedSec - idx * secondsPerPanel;
+      const hasNext = idx < panels.length - 1;
+      // Last `transitionSec` of every panel (except the final one) dissolves
+      // into the next panel. We redraw every tick during the transition so the
+      // alpha smoothly ramps in real time — this is why we no longer cache
+      // `lastDrawnIdx`; the hold phase still effectively no-ops at the canvas
+      // level since we're drawing the same pixels, but the transition phase
+      // genuinely changes pixels each frame.
+      const inTransition = hasNext && tIntoPanel >= secondsPerPanel - transitionSec;
+      if (inTransition) {
+        const t = Math.min(
+          1,
+          (tIntoPanel - (secondsPerPanel - transitionSec)) / transitionSec,
+        );
+        drawCrossfade(
+          ctx, width, height,
+          images[idx], panels[idx].caption, idx,
+          images[idx + 1], panels[idx + 1].caption, idx + 1,
+          panels.length, t,
+        );
+      } else {
         drawFrame(ctx, width, height, images[idx], panels[idx].caption, idx, panels.length);
-        lastDrawnIdx = idx;
       }
       if (onProgress) onProgress(Math.min(1, elapsedSec / expectedDurationSec));
       schedule();
