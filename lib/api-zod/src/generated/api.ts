@@ -162,7 +162,38 @@ export const RegenerateNovelResponse = zod.object({
 
 
 /**
- * @summary Stop an in-progress novel generation immediately.
+ * @summary Resume a paused novel — re-runs every panel that isn't already done.
+ */
+export const ResumeNovelParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ResumeNovelResponse = zod.object({
+  "id": zod.number(),
+  "title": zod.string(),
+  "sourceText": zod.string(),
+  "specifications": zod.string(),
+  "panelCount": zod.number(),
+  "textModel": zod.string(),
+  "artStyle": zod.string().nullish(),
+  "explicit": zod.boolean().optional(),
+  "status": zod.string(),
+  "error": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "panels": zod.array(zod.object({
+  "id": zod.number(),
+  "idx": zod.number(),
+  "caption": zod.string().nullish(),
+  "imagePrompt": zod.string().nullish(),
+  "imageDataUrl": zod.string().nullish(),
+  "status": zod.string().describe('pending | generating | done | failed'),
+  "error": zod.string().nullish()
+}))
+})
+
+
+/**
+ * @summary Pause an in-progress novel generation. Resumable via /resume.
  */
 export const AbortNovelParams = zod.object({
   "id": zod.coerce.number()

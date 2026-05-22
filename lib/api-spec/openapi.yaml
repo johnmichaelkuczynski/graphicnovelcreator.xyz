@@ -171,11 +171,42 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
 
+  /novels/{id}/resume:
+    post:
+      operationId: resumeNovel
+      tags: [novels]
+      summary: Resume a paused novel — re-runs every panel that isn't already done.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Novel"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Novel is already running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
   /novels/{id}/abort:
     post:
       operationId: abortNovel
       tags: [novels]
-      summary: Stop an in-progress novel generation immediately.
+      summary: Pause an in-progress novel generation. Resumable via /resume.
       parameters:
         - in: path
           name: id

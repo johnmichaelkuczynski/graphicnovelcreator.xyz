@@ -9,7 +9,7 @@ import {
   ListNovelsResponse,
   RegenerateNovelParams,
 } from "@workspace/api-zod";
-import { startNovelGeneration, repairNovel, NovelBusyError, regenerateSinglePanel } from "../lib/novel-pipeline";
+import { startNovelGeneration, repairNovel, NovelBusyError, regenerateSinglePanel, resumeNovelGeneration } from "../lib/novel-pipeline";
 import { inArray } from "drizzle-orm";
 import { MODELS, type ZhiId } from "../lib/ai";
 
@@ -211,17 +211,18 @@ router.post("/novels/:id/abort", async (req, res): Promise<void> => {
   }
   const [updated] = await db
     .update(novelsTable)
-    .set({ status: "aborted", error: "Aborted by user" })
+    .set({ status: "aborted", error: "Paused by user" })
     .where(eq(novelsTable.id, novel.id))
     .returning();
-  // Only flip pending/generating panels — leave already-done ones alone.
+  // Pause-style abort: leave pending panels alone so resume can pick them
+  // up. Flip currently-generating ones back to pending.
   await db
     .update(panelsTable)
-    .set({ status: "failed", error: "Aborted by user" })
+    .set({ status: "pending", error: null })
     .where(
       and(
         eq(panelsTable.novelId, novel.id),
-        inArray(panelsTable.status, ["pending", "generating"]),
+        eq(panelsTable.status, "generating"),
       ),
     );
 
@@ -325,6 +326,65 @@ router.post("/novels/:id/panels/:panelIdx/regenerate", async (req, res): Promise
     .where(eq(panelsTable.novelId, id))
     .orderBy(asc(panelsTable.idx));
 
+  res.json(
+    GetNovelResponse.parse({
+      id: novel.id,
+      title: novel.title,
+      sourceText: novel.sourceText,
+      specifications: novel.specifications,
+      panelCount: novel.panelCount,
+      textModel: novel.textModel,
+      artStyle: novel.artStyle ?? null,
+      explicit: novel.explicit,
+      status: novel.status,
+      error: novel.error ?? null,
+      createdAt: novel.createdAt.toISOString(),
+      panels: panels.map((p) => ({
+        id: p.id,
+        idx: p.idx,
+        caption: p.caption,
+        imagePrompt: p.imagePrompt,
+        imageDataUrl: p.imageDataUrl,
+        status: p.status,
+        error: p.error,
+      })),
+    }),
+  );
+});
+
+// Resume a previously-paused novel: re-runs generation for every panel that
+// isn't already "done", preserving everything that was done before the pause.
+router.post("/novels/:id/resume", async (req, res): Promise<void> => {
+  const params = GetNovelParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  try {
+    await resumeNovelGeneration(params.data.id);
+  } catch (err) {
+    if (err instanceof NovelBusyError) {
+      res.status(409).json({ error: err.message });
+      return;
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === "Novel not found") {
+      res.status(404).json({ error: msg });
+      return;
+    }
+    res.status(500).json({ error: msg });
+    return;
+  }
+  const [novel] = await db.select().from(novelsTable).where(eq(novelsTable.id, params.data.id));
+  if (!novel) {
+    res.status(404).json({ error: "Novel not found" });
+    return;
+  }
+  const panels = await db
+    .select()
+    .from(panelsTable)
+    .where(eq(panelsTable.novelId, novel.id))
+    .orderBy(asc(panelsTable.idx));
   res.json(
     GetNovelResponse.parse({
       id: novel.id,

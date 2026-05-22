@@ -637,6 +637,76 @@ export const useRegenerateNovel = <TError = ErrorType<ApiError>,
       return useMutation(getRegenerateNovelMutationOptions(options));
     }
 
+export const getResumeNovelUrl = (id: number,) => {
+
+
+
+
+  return `/api/novels/${id}/resume`
+}
+
+/**
+ * @summary Resume a paused novel — re-runs every panel that isn't already done.
+ */
+export const resumeNovel = async (id: number, options?: RequestInit): Promise<Novel> => {
+
+  return customFetch<Novel>(getResumeNovelUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getResumeNovelMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resumeNovel>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resumeNovel>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['resumeNovel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resumeNovel>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  resumeNovel(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResumeNovelMutationResult = NonNullable<Awaited<ReturnType<typeof resumeNovel>>>
+
+    export type ResumeNovelMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Resume a paused novel — re-runs every panel that isn't already done.
+ */
+export const useResumeNovel = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resumeNovel>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof resumeNovel>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getResumeNovelMutationOptions(options));
+    }
+
 export const getAbortNovelUrl = (id: number,) => {
 
 
@@ -646,7 +716,7 @@ export const getAbortNovelUrl = (id: number,) => {
 }
 
 /**
- * @summary Stop an in-progress novel generation immediately.
+ * @summary Pause an in-progress novel generation. Resumable via /resume.
  */
 export const abortNovel = async (id: number, options?: RequestInit): Promise<Novel> => {
 
@@ -694,7 +764,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type AbortNovelMutationError = ErrorType<ApiError>
 
     /**
- * @summary Stop an in-progress novel generation immediately.
+ * @summary Pause an in-progress novel generation. Resumable via /resume.
  */
 export const useAbortNovel = <TError = ErrorType<ApiError>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof abortNovel>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}

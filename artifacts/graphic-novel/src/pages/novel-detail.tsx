@@ -1,7 +1,7 @@
 import { useLocation, useParams } from "wouter";
-import { useGetNovel, getGetNovelQueryKey, useRegenerateNovel, useRepairNovel, useAbortNovel, useRegeneratePanel } from "@workspace/api-client-react";
+import { useGetNovel, getGetNovelQueryKey, useRegenerateNovel, useRepairNovel, useAbortNovel, useRegeneratePanel, useResumeNovel } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Printer, Loader2, AlertCircle, Video, RotateCcw, Wrench, Square } from "lucide-react";
+import { ArrowLeft, Printer, Loader2, AlertCircle, Video, RotateCcw, Wrench, Pause, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { format } from "date-fns";
@@ -35,8 +35,10 @@ export default function NovelDetail() {
   const regenerate = useRegenerateNovel();
   const repair = useRepairNovel();
   const abort = useAbortNovel();
+  const resume = useResumeNovel();
   const regeneratePanel = useRegeneratePanel();
   const [regeneratingIdx, setRegeneratingIdx] = useState<number | null>(null);
+  const [secondsPerPanel, setSecondsPerPanel] = useState<number>(3);
 
   const handleRegeneratePanel = (panelIdx: number) => {
     if (!id) return;
@@ -164,7 +166,7 @@ export default function NovelDetail() {
         panels: novel.panels
           .filter((p) => p.status === "done" && p.imageDataUrl)
           .map((p) => ({ caption: p.caption || "", imageDataUrl: p.imageDataUrl! })),
-        secondsPerPanel: 3,
+        secondsPerPanel,
         audioBlob: audioTrack?.blob,
         syncToAudio: !!audioTrack,
         onProgress: (p) => setVideoProgress(p),
@@ -263,9 +265,39 @@ export default function NovelDetail() {
               title="Stop the in-progress generation immediately"
             >
               {abort.isPending ? (
-                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Aborting...</>
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Pausing...</>
               ) : (
-                <><Square className="w-4 h-4 mr-2 fill-current" /> Abort</>
+                <><Pause className="w-4 h-4 mr-2 fill-current" /> Pause</>
+              )}
+            </Button>
+          )}
+          {novel.status === 'aborted' && novel.panels.some((p) => p.status !== 'done') && (
+            <Button
+              onClick={() => {
+                if (!id) return;
+                const novelId = Number(id);
+                resume.mutate(
+                  { id: novelId },
+                  {
+                    onSuccess: (fresh) => {
+                      queryClient.setQueryData(getGetNovelQueryKey(novelId), fresh);
+                      queryClient.invalidateQueries({ queryKey: getGetNovelQueryKey(novelId) });
+                    },
+                    onError: (err) => {
+                      alert("Could not resume: " + (err instanceof Error ? err.message : String(err)));
+                    },
+                  },
+                );
+              }}
+              disabled={resume.isPending}
+              className="font-bold uppercase tracking-widest"
+              title="Continue generating from where you paused"
+              data-testid="button-resume"
+            >
+              {resume.isPending ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Resuming...</>
+              ) : (
+                <><Play className="w-4 h-4 mr-2 fill-current" /> Resume</>
               )}
             </Button>
           )}
@@ -339,6 +371,25 @@ export default function NovelDetail() {
           </>
         )}
         {audioError && <p className="font-mono text-xs text-destructive">{audioError}</p>}
+        <div className="border-t-2 border-border pt-3 space-y-2">
+          <label className="font-mono text-xs uppercase tracking-widest flex justify-between items-center">
+            <span>Seconds per panel</span>
+            <span className="text-primary font-bold">{secondsPerPanel}s</span>
+          </label>
+          <input
+            type="range"
+            min={1}
+            max={20}
+            step={1}
+            value={secondsPerPanel}
+            onChange={(e) => setSecondsPerPanel(Number(e.target.value))}
+            className="w-full"
+            data-testid="input-seconds-per-panel"
+          />
+          <p className="font-mono text-xs text-muted-foreground">
+            Each panel holds for this long in the MP4. Default 3s. Crank it up so a short comic still covers a long song. When audio is attached, the export auto-stretches to match the song length anyway.
+          </p>
+        </div>
       </div>
 
       {isGenerating && (

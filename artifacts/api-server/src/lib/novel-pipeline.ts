@@ -551,11 +551,13 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
         .from(novelsTable)
         .where(eq(novelsTable.id, novelId));
       if (cur?.status === "aborted") {
-        logger.info({ novelId, atPanel: row.idx }, "Novel generation aborted by user");
+        logger.info({ novelId, atPanel: row.idx }, "Novel generation paused by user");
+        // Flip any currently-"generating" panels back to "pending" so resume
+        // picks them up. Leave already-done/failed ones alone.
         await db
           .update(panelsTable)
-          .set({ status: "failed", error: "Aborted by user" })
-          .where(and(eq(panelsTable.novelId, novelId), inArray(panelsTable.status, ["pending", "generating"])));
+          .set({ status: "pending", error: null })
+          .where(and(eq(panelsTable.novelId, novelId), eq(panelsTable.status, "generating")));
         return;
       }
       const plan = plans[row.idx];
@@ -845,7 +847,32 @@ async function regenerateSpecificPanels(
     }
   }
 
+  // Same batching cooldown as initial generation so resume of a 30-panel
+   // novel doesn't immediately re-trigger the rate-limit error that caused
+   // the original pause.
+  const BATCH_SIZE = 10;
+  const BATCH_PAUSE_MS = 10_000;
+  let panelsSinceBreak = 0;
+
   for (const row of targets.sort((a, b) => a.idx - b.idx)) {
+    if (panelsSinceBreak >= BATCH_SIZE) {
+      logger.info({ novelId, atPanel: row.idx }, `Pausing ${BATCH_PAUSE_MS}ms between panel batches`);
+      await new Promise((r) => setTimeout(r, BATCH_PAUSE_MS));
+      panelsSinceBreak = 0;
+    }
+    // Honor pause between panels here too — lets the user pause mid-resume.
+    const [cur] = await db
+      .select({ status: novelsTable.status })
+      .from(novelsTable)
+      .where(eq(novelsTable.id, novelId));
+    if (cur?.status === "aborted") {
+      logger.info({ novelId, atPanel: row.idx }, "Resume paused by user");
+      await db
+        .update(panelsTable)
+        .set({ status: "pending", error: null })
+        .where(and(eq(panelsTable.novelId, novelId), eq(panelsTable.status, "generating")));
+      return;
+    }
     if (!row.imagePrompt) {
       logger.warn({ novelId, panelIdx: row.idx }, "Repair: panel has no imagePrompt, skipping");
       await db
@@ -886,6 +913,7 @@ async function regenerateSpecificPanels(
         .set({ status: "failed", error: msg })
         .where(eq(panelsTable.id, row.id));
     }
+    panelsSinceBreak++;
   }
 
   // Re-derive novel status from the final panel state.
@@ -942,6 +970,40 @@ export async function regenerateSinglePanel(
       .set({ status: "failed", error: err instanceof Error ? err.message : String(err) })
       .where(eq(novelsTable.id, novelId));
   });
+}
+
+// Resume a paused ("aborted") novel by re-running generation for every panel
+// that isn't already "done". Reuses regenerateSpecificPanels so the same
+// style anchoring, batching, and pause-checking apply.
+export async function resumeNovelGeneration(novelId: number): Promise<number> {
+  const [novel] = await db.select().from(novelsTable).where(eq(novelsTable.id, novelId));
+  if (!novel) throw new Error("Novel not found");
+  if (novel.status === "pending" || novel.status === "generating") {
+    throw new NovelBusyError(novel.status);
+  }
+  const pending = await db
+    .select({ id: panelsTable.id, idx: panelsTable.idx, imagePrompt: panelsTable.imagePrompt })
+    .from(panelsTable)
+    .where(and(eq(panelsTable.novelId, novelId), inArray(panelsTable.status, ["pending", "failed", "generating"])))
+    .orderBy(asc(panelsTable.idx));
+  if (pending.length === 0) {
+    await db.update(novelsTable).set({ status: "done", error: null }).where(eq(novelsTable.id, novelId));
+    return 0;
+  }
+  await db
+    .update(panelsTable)
+    .set({ status: "pending", error: null })
+    .where(and(eq(panelsTable.novelId, novelId), inArray(panelsTable.status, ["pending", "failed", "generating"])));
+  await db.update(novelsTable).set({ status: "generating", error: null }).where(eq(novelsTable.id, novelId));
+
+  void regenerateSpecificPanels(novel, pending.map((p) => ({ id: p.id, idx: p.idx, imagePrompt: p.imagePrompt }))).catch((err) => {
+    logger.error({ novelId, err: err instanceof Error ? err.message : err }, "resumeNovelGeneration crashed");
+    void db
+      .update(novelsTable)
+      .set({ status: "failed", error: err instanceof Error ? err.message : String(err) })
+      .where(eq(novelsTable.id, novelId));
+  });
+  return pending.length;
 }
 
 export function startNovelGeneration(novelId: number): void {
