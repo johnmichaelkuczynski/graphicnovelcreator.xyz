@@ -377,6 +377,7 @@ export async function exportNovelVideo(opts: VideoExportOptions): Promise<VideoE
   // Prefer WebCodecs — gives us a real MP4 with deterministic per-frame timestamps,
   // bypassing the MediaRecorder MP4 bug that produced black/frozen video with audio
   // (Chrome's MediaRecorder MP4 path mis-sequences manually-pushed canvas frames).
+  let webCodecsFailure: unknown = null;
   if (hasWebCodecs()) {
     try {
       return await exportViaWebCodecs(opts, audioBuffer);
@@ -387,10 +388,28 @@ export async function exportNovelVideo(opts: VideoExportOptions): Promise<VideoE
       // Silently downgrading would defeat the whole point of the verification.
       if (err instanceof VideoVerificationError) throw err;
       console.warn("WebCodecs export failed, falling back to MediaRecorder:", err);
+      webCodecsFailure = err;
       // Fall through to MediaRecorder only for genuine encoder/codec errors.
     }
   }
-  return await exportViaMediaRecorder(opts, audioBuffer);
+  try {
+    return await exportViaMediaRecorder(opts, audioBuffer);
+  } catch (err) {
+    // If WebCodecs ALSO failed, surface its error too — otherwise the user sees
+    // only the MediaRecorder failure and we can't tell why the better path bailed.
+    if (webCodecsFailure) {
+      const wcMsg = webCodecsFailure instanceof Error
+        ? webCodecsFailure.message
+        : String(webCodecsFailure);
+      const mrMsg = err instanceof Error ? err.message : String(err);
+      const combined = `${mrMsg} (WebCodecs path also failed first: ${wcMsg})`;
+      if (err instanceof VideoVerificationError) {
+        throw new VideoVerificationError(combined, err.report);
+      }
+      throw new Error(combined);
+    }
+    throw err;
+  }
 }
 
 // --- WebCodecs + mp4-muxer path ---------------------------------------------------
@@ -674,14 +693,22 @@ async function exportViaMediaRecorder(
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Could not create canvas context.");
+  const ctxMaybe = canvas.getContext("2d");
+  if (!ctxMaybe) throw new Error("Could not create canvas context.");
+  const ctx: CanvasRenderingContext2D = ctxMaybe;
 
   const images = await Promise.all(panels.map((p) => loadImage(p.imageDataUrl)));
   drawFrame(ctx, width, height, images[0], panels[0].caption, 0, panels.length);
 
-  const videoStream = canvas.captureStream(0);
-  const videoTrack = videoStream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined;
+  // CRITICAL: captureStream(fps) — browser-driven continuous capture at the
+  // chosen framerate. The PREVIOUS implementation used captureStream(0) +
+  // requestFrame() in a setTimeout loop, but setTimeout in a Replit-preview-
+  // sized iframe gets aggressively throttled (sometimes down to 1Hz when the
+  // app isn't strictly focused), turning a 45 s slideshow into a 6-minute
+  // file. With captureStream(fps), the muxed file length equals the wall-clock
+  // time we actually run the recorder for, no matter how laggy our draw loop is.
+  const videoStream = canvas.captureStream(fps);
+  const videoTrack = videoStream.getVideoTracks()[0];
   if (!videoTrack) throw new Error("Could not create video track from canvas.");
   const tracks: MediaStreamTrack[] = [videoTrack];
   let audioSource: AudioBufferSourceNode | null = null;
@@ -701,40 +728,80 @@ async function exportViaMediaRecorder(
   });
   const chunks: Blob[] = [];
   recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-  const stopped = new Promise<void>((resolve) => { recorder.onstop = () => resolve(); });
+  const recorderStopped = new Promise<void>((resolve) => { recorder.onstop = () => resolve(); });
+
+  // Compute the exact wall-clock duration this recording must run for. When
+  // audio is present and syncToAudio is true we use audioDuration directly; in
+  // every case we use it to drive a self-correcting loop below.
+  const framesPerPanel = Math.max(1, Math.round(secondsPerPanel * fps));
+  const expectedDurationSec = audioBuffer && syncToAudio
+    ? audioDuration
+    : (framesPerPanel * panels.length) / fps;
 
   if (audioCtx && audioCtx.state === "suspended") {
     try { await audioCtx.resume(); } catch { /* best effort */ }
   }
-  recorder.start(250);
+  recorder.start();
+  const recordStartMs = performance.now();
   if (audioSource) audioSource.start();
 
-  const framesPerPanel = Math.max(1, Math.round(secondsPerPanel * fps));
-  const totalFrames = framesPerPanel * panels.length;
-  const frameInterval = 1000 / fps;
-
-  let frameCount = 0;
-  for (let i = 0; i < panels.length; i++) {
-    for (let f = 0; f < framesPerPanel; f++) {
-      drawFrame(ctx, width, height, images[i], panels[i].caption, i, panels.length);
-      if (typeof videoTrack.requestFrame === "function") videoTrack.requestFrame();
-      await new Promise((r) => setTimeout(r, frameInterval));
-      frameCount++;
-      if (onProgress) onProgress(frameCount / totalFrames);
+  // Self-correcting wall-clock draw loop. Each tick we look at the REAL
+  // elapsed wall time (not a frame counter) to decide which panel to show.
+  // This way, if the host throttles our timer down to e.g. 250 ms, we still
+  // jump to the correct panel for the current moment instead of falling
+  // further and further behind — and we always stop at the right wall time.
+  // rAF is the primary scheduler; a 50 ms setInterval is a safety net for
+  // when rAF is paused (e.g. minimized window / cross-origin iframe with no
+  // visibility), guaranteeing we still terminate at expectedDurationSec.
+  let lastDrawnIdx = 0;
+  await new Promise<void>((resolve) => {
+    let done = false;
+    // Single-flight scheduling guards: at most one rAF and one timeout in
+    // flight at a time, so the safety setInterval can't seed new rAF chains
+    // every 50 ms and accumulate hundreds of concurrent callbacks during long
+    // exports (which would drive CPU up and worsen the very throttling we're
+    // working around).
+    let rafScheduled = false;
+    function step() {
+      rafScheduled = false;
+      if (done) return;
+      const elapsedSec = (performance.now() - recordStartMs) / 1000;
+      if (elapsedSec >= expectedDurationSec) {
+        done = true;
+        clearInterval(safetyInterval);
+        resolve();
+        return;
+      }
+      const idx = Math.min(
+        panels.length - 1,
+        Math.floor(elapsedSec / secondsPerPanel),
+      );
+      if (idx !== lastDrawnIdx) {
+        drawFrame(ctx, width, height, images[idx], panels[idx].caption, idx, panels.length);
+        lastDrawnIdx = idx;
+      }
+      if (onProgress) onProgress(Math.min(1, elapsedSec / expectedDurationSec));
+      schedule();
     }
-  }
-
-  if (audioDuration > 0) {
-    const elapsedSec = (framesPerPanel * panels.length) / fps;
-    const remainingMs = Math.max(0, (audioDuration - elapsedSec) * 1000);
-    if (remainingMs > 0) await new Promise((r) => setTimeout(r, remainingMs));
-  }
-  await new Promise((r) => setTimeout(r, 200));
+    function schedule() {
+      if (done || rafScheduled) return;
+      rafScheduled = true;
+      requestAnimationFrame(step);
+    }
+    // Safety watchdog: if rAF is paused (minimized window, hidden iframe),
+    // this still fires and runs step() directly. step() re-arms rAF only
+    // through schedule(), which is single-flight, so no chain accumulation.
+    const safetyInterval = window.setInterval(() => {
+      if (done) return;
+      step();
+    }, 50);
+    schedule();
+  });
 
   try {
     try { audioSource?.stop(); } catch { /* already stopped */ }
     recorder.stop();
-    await stopped;
+    await recorderStopped;
   } finally {
     combinedStream.getTracks().forEach((t) => { try { t.stop(); } catch { /* noop */ } });
     videoStream.getTracks().forEach((t) => { try { t.stop(); } catch { /* noop */ } });
@@ -746,22 +813,20 @@ async function exportViaMediaRecorder(
   const finalExt = extFromBlobType(actualType, ext);
   const safeTitle = (title || "novel").replace(/[^a-z0-9_-]+/gi, "_").slice(0, 60) || "novel";
 
-  // MediaRecorder is wall-clock driven (we drive it with setTimeout), so its
-  // actual duration is inherently sloppier than the WebCodecs path. We still
-  // run the same verification but with a looser tolerance (250 ms) — anything
-  // worse than that is genuinely user-visible and should be reported as a
-  // failure rather than silently shipped.
-  const expectedDurationSec = audioBuffer && syncToAudio
-    ? audioDuration
-    : (framesPerPanel * panels.length) / fps;
+  // MediaRecorder is wall-clock driven (we drive it with rAF + setTimeout),
+  // so its actual duration is inherently sloppier than the WebCodecs path.
+  // 0.5 s tolerance — that's the realistic accuracy of captureStream + the
+  // browser's MediaRecorder pipeline (it has to flush partial encoder buffers
+  // when stop() is called, which usually adds a few hundred ms). Anything
+  // worse is a genuine bug worth surfacing.
   const verification = await verifyExportDuration({
     blob,
     expectedDurationSec,
     hasAudio: !!audioBuffer,
     panelCount: panels.length,
     secondsPerPanel,
-    videoToleranceSec: 0.25,
-    audioToleranceSec: 0.25,
+    videoToleranceSec: 0.5,
+    audioToleranceSec: 0.5,
   });
 
   return {
