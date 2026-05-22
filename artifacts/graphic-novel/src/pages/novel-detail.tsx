@@ -1,7 +1,7 @@
 import { useLocation, useParams } from "wouter";
-import { useGetNovel, getGetNovelQueryKey, useRegenerateNovel, useRepairNovel } from "@workspace/api-client-react";
+import { useGetNovel, getGetNovelQueryKey, useRegenerateNovel, useRepairNovel, useAbortNovel } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Printer, Loader2, AlertCircle, Video, RotateCcw, Wrench } from "lucide-react";
+import { ArrowLeft, Printer, Loader2, AlertCircle, Video, RotateCcw, Wrench, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { format } from "date-fns";
@@ -33,6 +33,7 @@ export default function NovelDetail() {
   const queryClient = useQueryClient();
   const regenerate = useRegenerateNovel();
   const repair = useRepairNovel();
+  const abort = useAbortNovel();
   const [repairInstructions, setRepairInstructions] = useState("");
   const [repairNotice, setRepairNotice] = useState("");
 
@@ -221,6 +222,33 @@ export default function NovelDetail() {
           <ArrowLeft className="w-4 h-4 mr-2" /> Library
         </Button>
         <div className="flex gap-2">
+          {isGenerating && (
+            <Button
+              onClick={() => {
+                if (!id) return;
+                const novelId = Number(id);
+                abort.mutate(
+                  { id: novelId },
+                  {
+                    onSuccess: (fresh) => {
+                      queryClient.setQueryData(getGetNovelQueryKey(novelId), fresh);
+                      queryClient.invalidateQueries({ queryKey: getGetNovelQueryKey(novelId) });
+                    },
+                  },
+                );
+              }}
+              disabled={abort.isPending}
+              variant="destructive"
+              className="font-bold uppercase tracking-widest"
+              title="Stop the in-progress generation immediately"
+            >
+              {abort.isPending ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Aborting...</>
+              ) : (
+                <><Square className="w-4 h-4 mr-2 fill-current" /> Abort</>
+              )}
+            </Button>
+          )}
           <Button
             onClick={handleRegenerate}
             disabled={isGenerating || regenerate.isPending || exportingVideo}

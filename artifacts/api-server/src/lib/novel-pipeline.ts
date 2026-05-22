@@ -1,4 +1,4 @@
-import { eq, asc } from "drizzle-orm";
+import { eq, asc, and, inArray } from "drizzle-orm";
 import { db, novelsTable, panelsTable, type Novel } from "@workspace/db";
 import { generateText, generateImage, describeReferenceImages, type ZhiId } from "./ai";
 import {
@@ -534,6 +534,19 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
     const priorHashes: bigint[] = [];
 
     for (const row of inserted.sort((a, b) => a.idx - b.idx)) {
+      // Check for user abort between panels — status flips to "aborted" via the abort endpoint.
+      const [cur] = await db
+        .select({ status: novelsTable.status })
+        .from(novelsTable)
+        .where(eq(novelsTable.id, novelId));
+      if (cur?.status === "aborted") {
+        logger.info({ novelId, atPanel: row.idx }, "Novel generation aborted by user");
+        await db
+          .update(panelsTable)
+          .set({ status: "failed", error: "Aborted by user" })
+          .where(and(eq(panelsTable.novelId, novelId), inArray(panelsTable.status, ["pending", "generating"])));
+        return;
+      }
       const plan = plans[row.idx];
       await db
         .update(panelsTable)

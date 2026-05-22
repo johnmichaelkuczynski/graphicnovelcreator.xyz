@@ -637,6 +637,76 @@ export const useRegenerateNovel = <TError = ErrorType<ApiError>,
       return useMutation(getRegenerateNovelMutationOptions(options));
     }
 
+export const getAbortNovelUrl = (id: number,) => {
+
+
+
+
+  return `/api/novels/${id}/abort`
+}
+
+/**
+ * @summary Stop an in-progress novel generation immediately.
+ */
+export const abortNovel = async (id: number, options?: RequestInit): Promise<Novel> => {
+
+  return customFetch<Novel>(getAbortNovelUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getAbortNovelMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof abortNovel>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof abortNovel>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['abortNovel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof abortNovel>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  abortNovel(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AbortNovelMutationResult = NonNullable<Awaited<ReturnType<typeof abortNovel>>>
+
+    export type AbortNovelMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Stop an in-progress novel generation immediately.
+ */
+export const useAbortNovel = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof abortNovel>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof abortNovel>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getAbortNovelMutationOptions(options));
+    }
+
 export const getRepairNovelUrl = (id: number,) => {
 
 

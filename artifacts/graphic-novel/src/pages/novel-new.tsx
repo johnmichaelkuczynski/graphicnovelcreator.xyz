@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -21,8 +21,11 @@ import { ReferenceImagesUploader, ReferenceImage } from "@/components/reference-
 import { popRefinedRefs } from "@/lib/refined-refs";
 import { ArtStylePicker } from "@/components/art-style-picker";
 import { SpecificationsPresets } from "@/components/specifications-presets";
+import { ProjectDrafts } from "@/components/project-drafts";
 import { readAudioDuration, setPendingAudio, setNovelAudio, type AudioTrack } from "@/lib/audio-track";
 import { Music, X } from "lucide-react";
+
+const EXPLICIT_KEY = "graphic-novel:explicit-default";
 
 const formSchema = z.object({
   title: z.string().optional(),
@@ -67,6 +70,10 @@ export default function NovelNew() {
     }
   };
 
+  const initialExplicit = (() => {
+    try { return localStorage.getItem(EXPLICIT_KEY) === "1"; } catch { return false; }
+  })();
+
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -76,9 +83,15 @@ export default function NovelNew() {
       artStyle: "",
       panelCount: 12,
       textModel: "zhi4",
-      explicit: false,
+      explicit: initialExplicit,
     },
   });
+
+  // Persist the explicit toggle so it's remembered across sessions.
+  const explicitValue = form.watch("explicit");
+  useEffect(() => {
+    try { localStorage.setItem(EXPLICIT_KEY, explicitValue ? "1" : "0"); } catch { /* ignore */ }
+  }, [explicitValue]);
 
   const onSubmit = (values: z.infer<typeof formSchema>) => {
     createNovel.mutate({
@@ -115,6 +128,26 @@ export default function NovelNew() {
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+          <ProjectDrafts
+            capture={() => ({
+              title: form.getValues("title"),
+              sourceText: form.getValues("sourceText"),
+              specifications: form.getValues("specifications"),
+              artStyle: form.getValues("artStyle"),
+              panelCount: form.getValues("panelCount"),
+              textModel: form.getValues("textModel"),
+              explicit: form.getValues("explicit"),
+            })}
+            onLoad={(data) => {
+              if (typeof data.title === "string") form.setValue("title", data.title);
+              if (typeof data.sourceText === "string") form.setValue("sourceText", data.sourceText);
+              if (typeof data.specifications === "string") form.setValue("specifications", data.specifications);
+              if (typeof data.artStyle === "string") form.setValue("artStyle", data.artStyle);
+              if (typeof data.panelCount === "number") form.setValue("panelCount", data.panelCount);
+              if (typeof data.textModel === "string") form.setValue("textModel", data.textModel);
+              if (typeof data.explicit === "boolean") form.setValue("explicit", data.explicit);
+            }}
+          />
           <FormField
             control={form.control}
             name="title"

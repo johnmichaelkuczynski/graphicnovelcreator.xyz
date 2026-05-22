@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, desc, asc } from "drizzle-orm";
+import { eq, desc, asc, and } from "drizzle-orm";
 import { db, novelsTable, panelsTable } from "@workspace/db";
 import {
   CreateNovelBody,
@@ -10,6 +10,7 @@ import {
   RegenerateNovelParams,
 } from "@workspace/api-zod";
 import { startNovelGeneration, repairNovel, NovelBusyError } from "../lib/novel-pipeline";
+import { inArray } from "drizzle-orm";
 import { MODELS, type ZhiId } from "../lib/ai";
 
 const router: IRouter = Router();
@@ -190,6 +191,68 @@ router.post("/novels/:id/regenerate", async (req, res): Promise<void> => {
       error: updated.error ?? null,
       createdAt: updated.createdAt.toISOString(),
       panels: [],
+    }),
+  );
+});
+
+// Abort an in-progress novel. Flips status to "aborted" — the pipeline loop
+// checks this between panels and bails out cleanly. Also marks any
+// pending/generating panels failed so the UI stops showing them as in-flight.
+router.post("/novels/:id/abort", async (req, res): Promise<void> => {
+  const params = GetNovelParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const [novel] = await db.select().from(novelsTable).where(eq(novelsTable.id, params.data.id));
+  if (!novel) {
+    res.status(404).json({ error: "Novel not found" });
+    return;
+  }
+  const [updated] = await db
+    .update(novelsTable)
+    .set({ status: "aborted", error: "Aborted by user" })
+    .where(eq(novelsTable.id, novel.id))
+    .returning();
+  // Only flip pending/generating panels — leave already-done ones alone.
+  await db
+    .update(panelsTable)
+    .set({ status: "failed", error: "Aborted by user" })
+    .where(
+      and(
+        eq(panelsTable.novelId, novel.id),
+        inArray(panelsTable.status, ["pending", "generating"]),
+      ),
+    );
+
+  const panels = await db
+    .select()
+    .from(panelsTable)
+    .where(eq(panelsTable.novelId, novel.id))
+    .orderBy(asc(panelsTable.idx));
+
+  res.json(
+    GetNovelResponse.parse({
+      id: updated!.id,
+      title: updated!.title,
+      sourceText: updated!.sourceText,
+      specifications: updated!.specifications,
+      panelCount: updated!.panelCount,
+      textModel: updated!.textModel,
+      artStyle: updated!.artStyle ?? null,
+      explicit: updated!.explicit,
+      status: updated!.status,
+      error: updated!.error ?? null,
+      createdAt: updated!.createdAt.toISOString(),
+      panels: panels.map((p) => ({
+        id: p.id,
+        idx: p.idx,
+        caption: p.caption,
+        imagePrompt: p.imagePrompt,
+        imageDataUrl: p.imageDataUrl,
+        status: p.status,
+        error: p.error,
+      })),
     }),
   );
 });

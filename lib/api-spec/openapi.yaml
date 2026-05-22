@@ -171,6 +171,31 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
 
+  /novels/{id}/abort:
+    post:
+      operationId: abortNovel
+      tags: [novels]
+      summary: Stop an in-progress novel generation immediately.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Novel"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
   /novels/{id}/repair:
     post:
       operationId: repairNovel
