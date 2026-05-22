@@ -14,6 +14,18 @@ import { logger } from "./logger";
 const FIRST_PANEL_STRENGTH = 0.6;
 const ANCHOR_STRENGTH = 0.35;
 
+// SD3.5 (and most diffusion models) weight the FIRST and LAST tokens of the
+// prompt most heavily, and largely ignore negative prompts. The single most
+// effective tactic to stop the model baking garbled "text" into images is to
+// front- AND back-load an aggressive no-text directive in the POSITIVE
+// prompt. Bracketed emphasis tokens (e.g. "((no text))") further bias the
+// attention weights. This sandwiches every per-panel scene description
+// between two anti-text walls.
+const NO_TEXT_LEAD =
+  "((((NO TEXT IN IMAGE)))) (((no letters))) (((no writing))) (((no captions))) (((no speech bubbles))) (((no signs))) (((no labels))) (((no logos))) (((no watermarks))) — the image must be PURELY visual with ZERO written language anywhere. ";
+const NO_TEXT_TAIL =
+  " IMPORTANT: do not draw ANY text, letters, words, captions, dialogue, speech bubbles, signs, labels, or writing of any kind inside this image. The narration appears in a separate caption box outside the image; the image itself must contain NO written language whatsoever. No panel borders, no comic-book gutters.";
+
 // Wrap generateImage() with automatic quality control: every produced image
 // is decoded and scanned for the "blank" failure mode (solid black/white/single
 // color — usually a content-filter trip or sampler collapse). If blank, we
@@ -41,9 +53,17 @@ async function generateImageWithQC(opts: {
   const MAX_ATTEMPTS = 5;
   let lastReason = "";
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    // Seed delta of 7919 (a large prime) per retry so we never re-sample an
-    // adjacent latent point and just produce the same failure mode again.
-    const seed = ((opts.baseSeed + attempt * 7919) % 999_999_999) + 1;
+    // Seed mixing: novel-level base + panel index + retry attempt, each
+    // multiplied by a different large prime so consecutive panels and
+    // consecutive retries always sample wildly-different latent points.
+    // Without the panelIdx term, every panel's first attempt would roll the
+    // SAME seed, and two adjacent panels with similar prompts (e.g. "woman
+    // and man in chiaroscuro") would produce visually identical images that
+    // the dHash duplicate gate had to catch and re-roll — burning attempts
+    // and slowing generation. Mixing panelIdx in means panels are visually
+    // distinct from the FIRST attempt.
+    const seed =
+      ((opts.baseSeed + opts.panelIdx * 1_000_003 + attempt * 7919) % 999_999_999) + 1;
     const dataUrl = await generateImage({
       prompt: opts.promptText,
       referenceImageDataUrl: opts.styleAnchor,
@@ -323,7 +343,7 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
       try {
         const isFirstPanel = row.idx === 0;
         const { dataUrl, hash } = await generateImageWithQC({
-          promptText: `${refStyleLead}${userStyleLead}${fallbackStyle}${plan.imagePrompt}. No text, no captions, no speech bubbles, no panel borders inside the image.${framingRule}${specSuffix}`,
+          promptText: `${NO_TEXT_LEAD}${refStyleLead}${userStyleLead}${fallbackStyle}${plan.imagePrompt}.${NO_TEXT_TAIL}${framingRule}${specSuffix}`,
           novelId,
           panelIdx: row.idx,
           baseSeed: novelSeed,
@@ -618,7 +638,7 @@ async function regenerateSpecificPanels(
       // image. The per-panel idx mixes in deterministically.
       const repairSeed = ((novelSeed + (row.idx + 1) * 104729) % 999_999_999) + 1;
       const { dataUrl, hash } = await generateImageWithQC({
-        promptText: `${refStyleLead}${userStyleLead}${fallbackStyle}${row.imagePrompt}. No text, no captions, no speech bubbles, no panel borders inside the image.${framingRule}${specSuffix}`,
+        promptText: `${NO_TEXT_LEAD}${refStyleLead}${userStyleLead}${fallbackStyle}${row.imagePrompt}.${NO_TEXT_TAIL}${framingRule}${specSuffix}`,
         novelId,
         panelIdx: row.idx,
         baseSeed: repairSeed,

@@ -276,7 +276,7 @@ export async function generateImage(opts: {
     // mode: portraits with the subject's head chopped off. Callers may override entirely.
     negative_prompt:
       opts.negativePrompt ??
-      "cropped head, head out of frame, headless, decapitated, cut off head, face cut off, eyes cropped, out of frame, off-screen, low quality, blurry, jpeg artifacts, deformed, mutated, extra limbs, missing limbs, extra fingers, fused fingers, bad anatomy, asymmetric eyes, text, captions, speech bubbles, watermark, signature, logo",
+      "text, letters, words, writing, written language, typography, font, caption, captions, subtitle, subtitles, title, titles, label, labels, sign, signs, signage, signpost, billboard, poster, book cover, book title, newspaper, magazine, headline, speech bubble, speech bubbles, dialog balloon, thought bubble, comic panel borders, gutters, watermark, watermarks, signature, signatures, logo, logos, brand name, garbled text, gibberish text, fake text, illegible writing, cropped head, head out of frame, headless, decapitated, cut off head, face cut off, eyes cropped, out of frame, off-screen, low quality, blurry, jpeg artifacts, deformed, mutated, extra limbs, missing limbs, extra fingers, fused fingers, bad anatomy, asymmetric eyes",
     safe_mode: false,
     hide_watermark: true,
     return_binary: false,
