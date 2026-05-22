@@ -2,13 +2,15 @@
 // generator looking like a solid color (the most common failure mode of any
 // diffusion model — content filter trip, sampler collapse, NSFW redaction —
 // produces an all-black, all-white, or single-color rectangle that's useless
-// in a graphic novel).
+// in a graphic novel) AND detect near-duplicate panels (same seed + similar
+// prompt converges on the same latent point and reproduces an earlier image).
 //
-// We decode the PNG ourselves so we can read actual pixel data; that's the
-// only way to tell apart a real moody black-night panel (which has subtle
-// variation) from a panel that's literally one RGB value end to end.
+// We decode via `sharp` because Venice's PNG responses contain trailing bytes
+// past the IEND chunk (pngjs strict-throws "unrecognised content at end of
+// stream" on these; browsers tolerate them). sharp is also format-agnostic:
+// if the API ever flips us to JPEG or WebP we still get raw pixels.
 
-import { PNG } from "pngjs";
+import sharp from "sharp";
 
 export interface BlankAnalysis {
   isBlank: boolean;
@@ -21,23 +23,25 @@ export interface BlankAnalysis {
   uniqueColorBuckets: number; // count of distinct 4-bit-per-channel buckets seen
 }
 
-// PNG IEND chunk marker: "IEND" + CRC = 49 45 4E 44 AE 42 60 82. Some image
-// generators append metadata or padding bytes AFTER this terminator. Browsers
-// stop reading at IEND so they render fine, but pngjs is strict and throws
-// "unrecognised content at end of stream". We find IEND and truncate the
-// buffer there before handing it to pngjs.
-const PNG_IEND_MARKER = Buffer.from([0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
+interface DecodedImage {
+  width: number;
+  height: number;
+  // Raw RGB (3 bytes per pixel, no alpha).
+  data: Buffer;
+}
 
-function decodePngDataUrl(dataUrl: string): PNG {
-  const m = dataUrl.match(/^data:image\/png;base64,(.+)$/);
-  if (!m) throw new Error("Expected base64 PNG data URL");
-  let buf = Buffer.from(m[1], "base64");
-  const iendIdx = buf.indexOf(PNG_IEND_MARKER);
-  if (iendIdx !== -1) {
-    // Truncate to end of IEND chunk (idx + 8 bytes of marker).
-    buf = buf.subarray(0, iendIdx + PNG_IEND_MARKER.length);
-  }
-  return PNG.sync.read(buf);
+async function decodeImageDataUrl(dataUrl: string): Promise<DecodedImage> {
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) throw new Error("Expected base64 data URL");
+  const buf = Buffer.from(match[2], "base64");
+  // sharp auto-detects the format from magic bytes (so a mislabeled
+  // `data:image/png` containing JPEG/WebP still decodes correctly) and is
+  // tolerant of trailing bytes past the PNG IEND chunk.
+  const { data, info } = await sharp(buf)
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  return { width: info.width, height: info.height, data };
 }
 
 // ─── Perceptual hash (dHash) for duplicate detection ─────────────────────────
@@ -53,9 +57,8 @@ function decodePngDataUrl(dataUrl: string): PNG {
 // 64 bits. Comparing two hashes with Hamming distance: <=10 bits different
 // out of 64 is the canonical "near-duplicate" threshold in the perceptual-
 // hashing literature.
-export function computeDHash(dataUrl: string): bigint {
-  const png = decodePngDataUrl(dataUrl);
-  const { width, height, data } = png;
+export async function computeDHash(dataUrl: string): Promise<bigint> {
+  const { width, height, data } = await decodeImageDataUrl(dataUrl);
   const cols = 9;
   const rows = 8;
   // Downsample via nearest-neighbour. For our 1024x768 inputs this is plenty
@@ -66,7 +69,7 @@ export function computeDHash(dataUrl: string): bigint {
     for (let x = 0; x < cols; x++) {
       const sx = Math.min(width - 1, Math.floor(((x + 0.5) * width) / cols));
       const sy = Math.min(height - 1, Math.floor(((y + 0.5) * height) / rows));
-      const idx = (sy * width + sx) * 4;
+      const idx = (sy * width + sx) * 3;
       gray[y * cols + x] = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
     }
   }
@@ -103,9 +106,8 @@ export const DUPLICATE_DHASH_THRESHOLD = 10;
 // total buckets) and count how many distinct buckets the image touches. A real
 // scene easily lights up 200+ buckets; a "blank" image touches at most a few.
 // We sample on a stride so 1024x768 doesn't cost 0.8M iterations per panel.
-export function analyzePngForBlankness(dataUrl: string): BlankAnalysis {
-  const png = decodePngDataUrl(dataUrl);
-  const { width, height, data } = png;
+export async function analyzePngForBlankness(dataUrl: string): Promise<BlankAnalysis> {
+  const { width, height, data } = await decodeImageDataUrl(dataUrl);
 
   // Sample roughly 8000 pixels regardless of image size. Plenty of statistical
   // power, ~0.5ms of compute.
@@ -119,7 +121,7 @@ export function analyzePngForBlankness(dataUrl: string): BlankAnalysis {
 
   for (let y = 0; y < height; y += stride) {
     for (let x = 0; x < width; x += stride) {
-      const idx = (y * width + x) * 4;
+      const idx = (y * width + x) * 3;
       const r = data[idx];
       const g = data[idx + 1];
       const b = data[idx + 2];

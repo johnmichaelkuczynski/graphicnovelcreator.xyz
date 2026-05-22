@@ -56,7 +56,7 @@ async function generateImageWithQC(opts: {
     // Gate 1: blank-image detection.
     let hash: bigint;
     try {
-      const qc = analyzePngForBlankness(dataUrl);
+      const qc = await analyzePngForBlankness(dataUrl);
       if (qc.isBlank) {
         lastReason = qc.reason;
         logger.warn(
@@ -67,7 +67,7 @@ async function generateImageWithQC(opts: {
       }
       // Gate 2: duplicate-image detection. Compute the perceptual hash and
       // measure Hamming distance to every previously-accepted panel.
-      hash = computeDHash(dataUrl);
+      hash = await computeDHash(dataUrl);
     } catch (err) {
       // Fail CLOSED: undecodable payloads count as a failed attempt rather
       // than a silent acceptance. Accepting them would let malformed images
@@ -441,12 +441,12 @@ export async function repairNovel(
     }
     if (p.status === "done" && p.imageDataUrl) {
       try {
-        const qc = analyzePngForBlankness(p.imageDataUrl);
+        const qc = await analyzePngForBlankness(p.imageDataUrl);
         if (qc.isBlank) {
           pushTarget(p, `blank panel (${qc.reason})`);
           continue;
         }
-        survivorHashes.push({ id: p.id, idx: p.idx, imagePrompt: p.imagePrompt, hash: computeDHash(p.imageDataUrl) });
+        survivorHashes.push({ id: p.id, idx: p.idx, imagePrompt: p.imagePrompt, hash: await computeDHash(p.imageDataUrl) });
       } catch (err) {
         // Fail CLOSED: an undecodable image is by definition broken. Target it
         // so a corrupted payload doesn't survive a scan.
@@ -594,7 +594,7 @@ async function regenerateSpecificPanels(
     if (targetIdSet.has(p.id)) continue;
     if (p.status !== "done" || !p.imageDataUrl) continue;
     try {
-      priorHashes.push(computeDHash(p.imageDataUrl));
+      priorHashes.push(await computeDHash(p.imageDataUrl));
     } catch {
       // Unhashable — skip; the panel is already a repair target if it was
       // unparseable, otherwise it's not blocking us from generating new ones.
