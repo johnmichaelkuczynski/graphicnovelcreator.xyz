@@ -105,19 +105,14 @@ export async function generateText(opts: {
   system: string;
   user: string;
 }): Promise<string> {
-  // Explicit content forces Venice regardless of selected model.
-  const effective: ZhiId = opts.explicit ? "zhi4" : opts.model;
-  logger.info({ model: effective, explicit: !!opts.explicit }, "Generating text");
-  switch (effective) {
-    case "zhi1":
-      return callDeepSeek(opts.system, opts.user);
-    case "zhi2":
-      return callAnthropic(opts.system, opts.user);
-    case "zhi3":
-      return callOpenAI(opts.system, opts.user);
-    case "zhi4":
-      return callVeniceText(opts.system, opts.user);
-  }
+  // User directive: ALL text generation goes through Venice, period. The
+  // selected ZhiId is ignored at the routing layer (kept in the type so the
+  // UI/DB don't have to change). DeepSeek/Anthropic/OpenAI are intentionally
+  // unreachable from this function.
+  void opts.model;
+  void opts.explicit;
+  logger.info({ requestedModel: opts.model, routedTo: "venice" }, "Generating text");
+  return callVeniceText(opts.system, opts.user);
 }
 
 function parseDataUrl(dataUrl: string): { mediaType: string; base64: string } {
