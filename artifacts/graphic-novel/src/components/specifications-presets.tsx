@@ -5,21 +5,61 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Save, Trash2, Check, X } from "lucide-react";
 
 const STORAGE_KEY = "graphic-novel:specifications-presets";
-const MAX_PRESETS = 10;
+const MAX_PRESETS = 20;
 
 type Preset = { name: string; text: string };
+
+const BUILTIN_PRESETS: Preset[] = [
+  {
+    name: "Noir Detective",
+    text: "Hard-boiled noir. Rain-slicked streets, venetian blind shadows, cigarette smoke. Lone detective protagonist in trench coat and fedora. Pacing: brooding, deliberate. Layout: heavy black gutters, occasional full-bleed splash panel for revelations. Captions read like internal monologue.",
+  },
+  {
+    name: "Cosmic Horror",
+    text: "Lovecraftian dread. Coastal New England town, fog, impossible geometry. Color palette restricted to sickly greens, bruised purples, bone whites. Pacing: slow build, escalating wrongness. Layout: panels should feel constrained at first, then break into chaotic asymmetric grids as reality fractures.",
+  },
+  {
+    name: "Cyberpunk Heist",
+    text: "Neon-drenched megacity, 2087. Crew of four: netrunner, muscle, face, driver. Pacing: fast cuts, high tension. Layout: dense panels with diagonal slashes during action, wide letterbox panels for establishing shots. Lots of holographic UI overlays in the art direction.",
+  },
+  {
+    name: "Slice of Life",
+    text: "Quiet contemporary drama. Single protagonist navigating ordinary moments — coffee shops, train rides, late-night kitchens. Pacing: meditative, room to breathe. Layout: regular grids, minimal action lines, frequent silent panels. Captions are sparse and reflective.",
+  },
+  {
+    name: "Mythic Fantasy",
+    text: "High fantasy epic. Ensemble cast on a quest. Sweeping landscapes — mountains, ancient forests, ruined citadels. Pacing: chapter-like, alternating travel montages with character moments. Layout: tall vertical panels for grandeur, wide panels for landscapes, tight grids for dialogue.",
+  },
+  {
+    name: "Shōnen Action",
+    text: "Manga-style action. Teenage protagonist with a signature power. Pacing: explosive set-pieces with rapid-fire reaction shots. Layout: dynamic diagonal panels, speed lines, impact frames. Frequent close-ups on eyes and clenched fists. Big dramatic reveals get full-page splashes.",
+  },
+  {
+    name: "Indie Memoir",
+    text: "Autobiographical indie comic. First-person narration. Loose, hand-drawn feel. Pacing: associative, jumping between past and present. Layout: irregular panel sizes, hand-lettered captions, lots of white space. Single character focus across most panels.",
+  },
+  {
+    name: "Western Showdown",
+    text: "Spaghetti western. Dusty frontier town, harsh sun, long shadows. Lone gunslinger vs. corrupt local power. Pacing: long tense stares, then sudden violence. Layout: extreme close-ups on eyes and hands intercut with wide desert vistas. Sergio Leone framing.",
+  },
+];
 
 function loadPresets(): Preset[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((p) => p && typeof p.name === "string" && typeof p.text === "string")
-      .slice(0, MAX_PRESETS);
+    const userPresets: Preset[] = (() => {
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter(
+        (p) => p && typeof p.name === "string" && typeof p.text === "string",
+      );
+    })();
+    const userNames = new Set(userPresets.map((p) => p.name));
+    const builtins = BUILTIN_PRESETS.filter((p) => !userNames.has(p.name));
+    return [...builtins, ...userPresets].slice(0, MAX_PRESETS);
   } catch {
-    return [];
+    return [...BUILTIN_PRESETS];
   }
 }
 
