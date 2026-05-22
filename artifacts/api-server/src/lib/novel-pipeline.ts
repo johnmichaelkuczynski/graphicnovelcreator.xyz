@@ -157,6 +157,54 @@ function extractJson(text: string): unknown {
   throw new Error("Malformed JSON in model output");
 }
 
+// Extracts the first ~maxChars of `text`, trying to end at a sentence
+// boundary. Used to anchor panel-1's caption to the literal source opening.
+function firstSentences(text: string, maxChars = 280): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= maxChars) return trimmed;
+  const slice = trimmed.slice(0, maxChars);
+  const lastPunct = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("! "), slice.lastIndexOf("? "));
+  if (lastPunct > maxChars * 0.4) return trimmed.slice(0, lastPunct + 1);
+  return slice + "…";
+}
+
+// Same idea for the last ~maxChars, trying to start at a sentence boundary.
+function lastSentences(text: string, maxChars = 280): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= maxChars) return trimmed;
+  const slice = trimmed.slice(trimmed.length - maxChars);
+  const firstPunct = Math.min(
+    ...[". ", "! ", "? "].map((p) => {
+      const i = slice.indexOf(p);
+      return i === -1 ? Infinity : i;
+    }),
+  );
+  if (Number.isFinite(firstPunct) && firstPunct < maxChars * 0.6) {
+    return slice.slice(firstPunct + 2);
+  }
+  return "…" + slice;
+}
+
+// Bag-of-words Jaccard-style overlap (using min-set as denominator so a long
+// caption isn't penalised for containing more words than the short anchor).
+// Words <4 chars are dropped to ignore stop words like "the/and/of/in".
+function tokenOverlap(a: string, b: string): number {
+  const tok = (s: string) =>
+    new Set(
+      s
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((t) => t.length >= 4),
+    );
+  const ta = tok(a);
+  const tb = tok(b);
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let inter = 0;
+  for (const t of ta) if (tb.has(t)) inter++;
+  return inter / Math.min(ta.size, tb.size);
+}
+
 async function planPanels(opts: {
   sourceText: string;
   specifications: string;
@@ -222,7 +270,34 @@ REQUIRED behavior: read the source text's first 1–3 sentences. Panel 1's capti
 
 The SAME RULE applies in reverse to the FINAL panel: do not invent a closing "the end" / "and so..." epilogue caption that does not exist in the source. The last panel illustrates the source's last sentences.${specBlock}`;
 
-  const user = `SOURCE TEXT:\n${opts.sourceText}\n\nReminder: Panel 1's caption must illustrate the FIRST SENTENCE(S) of the SOURCE TEXT above — do NOT invent an opening establishing-shot / mood-setting / "in the shadows..." preamble that isn't in the source. The last panel must illustrate the source's last sentences. Return the JSON array now.`;
+  const firstAnchor = firstSentences(opts.sourceText, 280);
+  const lastAnchor = lastSentences(opts.sourceText, 280);
+  const user = `SOURCE TEXT:
+${opts.sourceText}
+
+═══════════════════════════════════════════════════════════════
+PANEL 1 ANCHOR — MANDATORY
+═══════════════════════════════════════════════════════════════
+Panel 1's caption MUST be a faithful paraphrase (or direct quote) of THIS exact opening text from the source above:
+
+"""
+${firstAnchor}
+"""
+
+Do NOT prepend an establishing-shot panel, a mood-setting opener, a narrator-introduction, a "title card", or ANY caption whose words/events are not contained in the anchor text above. If the source opens with an idea, a thesis, or dialogue, panel 1 illustrates THAT — not a fictional character introduction you invent. The very first word of panel 1's caption should map directly to the very first idea in the anchor text.
+
+═══════════════════════════════════════════════════════════════
+FINAL PANEL ANCHOR — MANDATORY
+═══════════════════════════════════════════════════════════════
+Panel ${opts.panelCount}'s caption MUST be a faithful paraphrase (or direct quote) of THIS exact closing text from the source above:
+
+"""
+${lastAnchor}
+"""
+
+Do NOT append a "the end" / "and so..." / epilogue caption whose words are not in the closing-anchor text above.
+
+Return the JSON array of exactly ${opts.panelCount} objects now.`;
 
   const raw = await generateText({
     model: opts.textModel,
@@ -243,6 +318,53 @@ The SAME RULE applies in reverse to the FINAL panel: do not invent a closing "th
   while (plans.length < opts.panelCount) {
     plans.push({ caption: "", imagePrompt: plans[plans.length - 1]?.imagePrompt ?? "continuation" });
   }
+
+  // Anchor enforcement: even with explicit instructions in both the system and
+  // user prompts, DeepSeek frequently invents a scene-setting "establishing
+  // shot" panel 1 (e.g. "In the dimly lit room, a heroic film noir man sits
+  // at a desk..." when the source is actually an essay about truth). This
+  // post-hoc check measures token overlap between the first/last panel
+  // captions and the literal first/last anchor text from the source. If
+  // overlap is too low, the caption is a fabricated preamble/epilogue — we
+  // REPLACE both caption and imagePrompt with values grounded in the source.
+  // Threshold of 0.15 is intentionally lenient: even a faithful paraphrase
+  // typically shares ≥3 content words with a ~280-char anchor, so a value
+  // below this means the panel barely references the source at all.
+  const MIN_ANCHOR_OVERLAP = 0.15;
+  const styleHint = opts.artStyle?.trim() || "Cinematic, richly detailed illustration.";
+  if (plans.length > 0 && firstAnchor.length > 20) {
+    const overlap = tokenOverlap(plans[0].caption, firstAnchor);
+    if (overlap < MIN_ANCHOR_OVERLAP) {
+      logger.warn(
+        { originalCaption: plans[0].caption.slice(0, 200), anchorPreview: firstAnchor.slice(0, 200), overlap },
+        "Panel 1 caption did not match source opening; replacing with literal first sentence(s)",
+      );
+      plans[0] = {
+        caption: firstAnchor,
+        imagePrompt: `A scene illustrating these opening words from the source: "${firstAnchor}". ${styleHint}`,
+      };
+    }
+  }
+  if (plans.length > 1 && lastAnchor.length > 20) {
+    const lastIdx = plans.length - 1;
+    const overlap = tokenOverlap(plans[lastIdx].caption, lastAnchor);
+    if (overlap < MIN_ANCHOR_OVERLAP) {
+      logger.warn(
+        {
+          panelIdx: lastIdx,
+          originalCaption: plans[lastIdx].caption.slice(0, 200),
+          anchorPreview: lastAnchor.slice(0, 200),
+          overlap,
+        },
+        "Final panel caption did not match source closing; replacing with literal last sentence(s)",
+      );
+      plans[lastIdx] = {
+        caption: lastAnchor,
+        imagePrompt: `A scene illustrating these closing words from the source: "${lastAnchor}". ${styleHint}`,
+      };
+    }
+  }
+
   return plans;
 }
 
