@@ -132,12 +132,64 @@ interface PanelPlan {
   imagePrompt: string;
 }
 
+// Strip `//` line comments, `/* ... */` block comments, and trailing commas
+// from a JSON-ish string while preserving any string literals. Text models
+// (esp. with chain-of-thought) sometimes emit JS-flavored JSON like
+//   [ {"caption": "x"}, // 77 more panels follow
+//     {"caption": "y"}, ]
+// which is invalid per spec but trivially recoverable.
+function sanitizeJsonish(s: string): string {
+  let out = "";
+  let i = 0;
+  let inStr = false;
+  let strCh = "";
+  while (i < s.length) {
+    const c = s[i];
+    if (inStr) {
+      out += c;
+      if (c === "\\" && i + 1 < s.length) {
+        out += s[i + 1];
+        i += 2;
+        continue;
+      }
+      if (c === strCh) inStr = false;
+      i++;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      inStr = true;
+      strCh = c;
+      out += c;
+      i++;
+      continue;
+    }
+    if (c === "/" && s[i + 1] === "/") {
+      while (i < s.length && s[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && s[i + 1] === "*") {
+      i += 2;
+      while (i < s.length && !(s[i] === "*" && s[i + 1] === "/")) i++;
+      i += 2;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  // Drop trailing commas before } or ]
+  return out.replace(/,(\s*[}\]])/g, "$1");
+}
+
 function extractJson(text: string): unknown {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   const candidate = (fenced ? fenced[1] : text).trim();
   // Try direct parse first
   try {
     return JSON.parse(candidate);
+  } catch {}
+  // Then try after stripping JS-flavored comments / trailing commas
+  try {
+    return JSON.parse(sanitizeJsonish(candidate));
   } catch {}
   // Fallback: locate the first { ... } or [ ... ] block
   const start = candidate.search(/[[{]/);
@@ -150,7 +202,12 @@ function extractJson(text: string): unknown {
     else if (candidate[i] === close) {
       depth--;
       if (depth === 0) {
-        return JSON.parse(candidate.slice(start, i + 1));
+        const slice = candidate.slice(start, i + 1);
+        try {
+          return JSON.parse(slice);
+        } catch {
+          return JSON.parse(sanitizeJsonish(slice));
+        }
       }
     }
   }
