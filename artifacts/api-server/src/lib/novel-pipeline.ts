@@ -21,10 +21,12 @@ const ANCHOR_STRENGTH = 0.35;
 // prompt. Bracketed emphasis tokens (e.g. "((no text))") further bias the
 // attention weights. This sandwiches every per-panel scene description
 // between two anti-text walls.
+// Kept SHORT because some Venice models (lustify-sdxl) cap prompts at 1500
+// chars. Bracketed emphasis tokens still bias attention even when terse.
 const NO_TEXT_LEAD =
-  "((((NO TEXT IN IMAGE)))) (((no letters))) (((no writing))) (((no captions))) (((no speech bubbles))) (((no signs))) (((no labels))) (((no logos))) (((no watermarks))) — the image must be PURELY visual with ZERO written language anywhere. ";
+  "((no text)) ((no letters)) ((no captions)) ((no speech bubbles)) ((no watermarks)) — pure visual, zero written language. ";
 const NO_TEXT_TAIL =
-  " IMPORTANT: do not draw ANY text, letters, words, captions, dialogue, speech bubbles, signs, labels, or writing of any kind inside this image. The narration appears in a separate caption box outside the image; the image itself must contain NO written language whatsoever. No panel borders, no comic-book gutters.";
+  " No text, letters, words, captions, speech bubbles, signs, labels, logos, or writing anywhere in the image. No panel borders.";
 
 // Wrap generateImage() with automatic quality control: every produced image
 // is decoded and scanned for the "blank" failure mode (solid black/white/single

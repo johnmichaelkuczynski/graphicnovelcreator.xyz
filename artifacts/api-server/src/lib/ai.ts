@@ -262,9 +262,32 @@ export async function generateImage(opts: {
   const modelIdx = opts._modelIdx ?? 0;
   const model = opts.modelOverride ?? VENICE_IMAGE_MODELS[modelIdx] ?? VENICE_IMAGE_MODELS[0];
 
+  // Per-model prompt char caps. Venice rejects overlong prompts with HTTP 400
+  // ("prompt must be less than N characters for the X model"). We trim from
+  // the MIDDLE so the prompt's leading directives (style preamble, anti-text
+  // wall) AND trailing directives (anti-text tail, framing rule) both survive
+  // intact — the middle is the per-panel scene description, which is more
+  // tolerant of compression than the model-instruction sandwich around it.
+  const PROMPT_CHAR_CAPS: Record<string, number> = {
+    "lustify-sdxl": 1500,
+    "venice-sd35": 2000,
+    "flux-dev-uncensored": 2000,
+  };
+  const cap = PROMPT_CHAR_CAPS[model] ?? 2000;
+  let prompt = opts.prompt;
+  if (prompt.length > cap) {
+    const keepHead = Math.floor(cap * 0.45);
+    const keepTail = cap - keepHead - 5; // 5 chars for " … "
+    prompt = `${prompt.slice(0, keepHead)} … ${prompt.slice(prompt.length - keepTail)}`;
+    logger.warn(
+      { model, originalChars: opts.prompt.length, cap, finalChars: prompt.length },
+      "Prompt exceeded model char cap; trimmed middle",
+    );
+  }
+
   const body: Record<string, unknown> = {
     model,
-    prompt: opts.prompt,
+    prompt,
     width: opts.width ?? 1024,
     height: opts.height ?? 1024,
     steps: 30,
