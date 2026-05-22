@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Save, Trash2 } from "lucide-react";
+import { Save, Trash2, Check, X } from "lucide-react";
 
 const STORAGE_KEY = "graphic-novel:specifications-presets";
 const MAX_PRESETS = 10;
@@ -35,10 +36,18 @@ export function SpecificationsPresets({
 }) {
   const [presets, setPresets] = useState<Preset[]>([]);
   const [selected, setSelected] = useState<string>("");
+  const [naming, setNaming] = useState(false);
+  const [draftName, setDraftName] = useState("");
+  const [hint, setHint] = useState<string>("");
 
   useEffect(() => {
     setPresets(loadPresets());
   }, []);
+
+  const flashHint = (msg: string) => {
+    setHint(msg);
+    setTimeout(() => setHint(""), 2500);
+  };
 
   const handleLoad = (name: string) => {
     setSelected(name);
@@ -46,81 +55,116 @@ export function SpecificationsPresets({
     if (p) onLoad(p.text);
   };
 
-  const handleSave = () => {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      alert("Nothing to save — type some director's notes first.");
+  const startSave = () => {
+    if (!value.trim()) {
+      flashHint("Type some notes first.");
       return;
     }
-    const name = window.prompt(
-      `Name this preset (max ${MAX_PRESETS} saved; saving an existing name overwrites it):`,
-      selected || "",
-    );
-    if (!name) return;
-    const cleanName = name.trim().slice(0, 60);
-    if (!cleanName) return;
+    setDraftName(selected || "");
+    setNaming(true);
+  };
 
+  const commitSave = () => {
+    const cleanName = draftName.trim().slice(0, 60);
+    if (!cleanName) {
+      flashHint("Name required.");
+      return;
+    }
     const existingIdx = presets.findIndex((p) => p.name === cleanName);
     let next: Preset[];
     if (existingIdx >= 0) {
       next = [...presets];
-      next[existingIdx] = { name: cleanName, text: trimmed };
+      next[existingIdx] = { name: cleanName, text: value.trim() };
     } else {
       if (presets.length >= MAX_PRESETS) {
-        alert(`You already have ${MAX_PRESETS} presets. Delete one first.`);
+        flashHint(`Max ${MAX_PRESETS} presets — delete one first.`);
         return;
       }
-      next = [...presets, { name: cleanName, text: trimmed }];
+      next = [...presets, { name: cleanName, text: value.trim() }];
     }
     setPresets(next);
     savePresets(next);
     setSelected(cleanName);
+    setNaming(false);
+    setDraftName("");
+    flashHint(`Saved "${cleanName}"`);
   };
 
   const handleDelete = () => {
     if (!selected) return;
-    if (!window.confirm(`Delete preset "${selected}"?`)) return;
     const next = presets.filter((p) => p.name !== selected);
     setPresets(next);
     savePresets(next);
+    const removed = selected;
     setSelected("");
+    flashHint(`Deleted "${removed}"`);
   };
 
   return (
-    <div className="flex items-center gap-2 mt-1">
-      <Select value={selected} onValueChange={handleLoad}>
-        <SelectTrigger className="h-8 text-xs font-mono flex-1">
-          <SelectValue placeholder={presets.length ? "Load preset…" : "No saved presets"} />
-        </SelectTrigger>
-        <SelectContent>
-          {presets.map((p) => (
-            <SelectItem key={p.name} value={p.name} className="text-xs font-mono">
-              {p.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-8 px-2"
-        onClick={handleSave}
-        title="Save current notes as a preset"
-      >
-        <Save className="h-3.5 w-3.5" />
-      </Button>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-8 px-2"
-        onClick={handleDelete}
-        disabled={!selected}
-        title="Delete selected preset"
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-      </Button>
+    <div className="mt-1 space-y-1">
+      <div className="flex items-center gap-2">
+        {naming ? (
+          <>
+            <Input
+              autoFocus
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); commitSave(); }
+                if (e.key === "Escape") { e.preventDefault(); setNaming(false); setDraftName(""); }
+              }}
+              placeholder="Name this preset…"
+              className="h-8 text-xs font-mono flex-1"
+              maxLength={60}
+            />
+            <Button type="button" variant="default" size="sm" className="h-8 px-2" onClick={commitSave} title="Confirm save">
+              <Check className="h-3.5 w-3.5" />
+            </Button>
+            <Button type="button" variant="outline" size="sm" className="h-8 px-2" onClick={() => { setNaming(false); setDraftName(""); }} title="Cancel">
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </>
+        ) : (
+          <>
+            <Select value={selected} onValueChange={handleLoad}>
+              <SelectTrigger className="h-8 text-xs font-mono flex-1">
+                <SelectValue placeholder={presets.length ? "Load preset…" : "No saved presets"} />
+              </SelectTrigger>
+              <SelectContent>
+                {presets.map((p) => (
+                  <SelectItem key={p.name} value={p.name} className="text-xs font-mono">
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 px-2"
+              onClick={startSave}
+              title="Save current notes as a preset"
+            >
+              <Save className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 px-2"
+              onClick={handleDelete}
+              disabled={!selected}
+              title="Delete selected preset"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </>
+        )}
+      </div>
+      {hint && (
+        <div className="text-xs font-mono text-muted-foreground">{hint}</div>
+      )}
     </div>
   );
 }
