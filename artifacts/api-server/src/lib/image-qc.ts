@@ -21,10 +21,22 @@ export interface BlankAnalysis {
   uniqueColorBuckets: number; // count of distinct 4-bit-per-channel buckets seen
 }
 
+// PNG IEND chunk marker: "IEND" + CRC = 49 45 4E 44 AE 42 60 82. Some image
+// generators append metadata or padding bytes AFTER this terminator. Browsers
+// stop reading at IEND so they render fine, but pngjs is strict and throws
+// "unrecognised content at end of stream". We find IEND and truncate the
+// buffer there before handing it to pngjs.
+const PNG_IEND_MARKER = Buffer.from([0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
+
 function decodePngDataUrl(dataUrl: string): PNG {
   const m = dataUrl.match(/^data:image\/png;base64,(.+)$/);
   if (!m) throw new Error("Expected base64 PNG data URL");
-  const buf = Buffer.from(m[1], "base64");
+  let buf = Buffer.from(m[1], "base64");
+  const iendIdx = buf.indexOf(PNG_IEND_MARKER);
+  if (iendIdx !== -1) {
+    // Truncate to end of IEND chunk (idx + 8 bytes of marker).
+    buf = buf.subarray(0, iendIdx + PNG_IEND_MARKER.length);
+  }
   return PNG.sync.read(buf);
 }
 
