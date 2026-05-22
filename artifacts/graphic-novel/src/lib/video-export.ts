@@ -7,6 +7,12 @@ export interface VideoExportOptions {
   title: string;
   panels: VideoExportPanel[];
   secondsPerPanel?: number;
+  // Per-panel duration overrides in seconds. When provided, length must equal
+  // panels.length and EACH panel uses its own duration. Takes precedence over
+  // `secondsPerPanel` and implicitly disables `syncToAudio` (the user is now
+  // dictating timing explicitly — the audio is sliced to fit, not the other
+  // way around).
+  panelDurations?: number[];
   fps?: number;
   width?: number;
   height?: number;
@@ -16,6 +22,14 @@ export interface VideoExportOptions {
   // exactly the audio length — making this trivially usable as a music video.
   audioBlob?: Blob;
   syncToAudio?: boolean;
+  // Seconds into the source audio where the music should start playing. Lets
+  // the user pick e.g. the 60-second window of a 10-minute track they want
+  // muxed. Default 0 (start from the beginning).
+  audioStartSec?: number;
+  // Linear fade-out at the tail of the muxed audio, in seconds. Default 2.
+  // Set to 0 to disable. Applied AFTER trimming/padding to the video length,
+  // so the fade always lands exactly at the end of the video.
+  audioFadeOutSec?: number;
 }
 
 // ALWAYS prefer MP4 — TikTok, iOS Photos, Premiere, every social platform wants MP4.
@@ -416,7 +430,16 @@ async function exportViaWebCodecs(
   audioBuffer: AudioBuffer | null,
 ): Promise<VideoExportResult> {
   const { title, panels, fps = 30, width = 1080, height = 1920, onProgress } = opts;
-  const syncToAudio = opts.syncToAudio ?? !!audioBuffer;
+  const audioStartSec = Math.max(0, opts.audioStartSec ?? 0);
+  const audioFadeOutSec = Math.max(0, opts.audioFadeOutSec ?? 2);
+  // Per-panel overrides force manual timing — audio is sliced to fit instead
+  // of stretching the slideshow over the whole song.
+  const hasPerPanel =
+    Array.isArray(opts.panelDurations) && opts.panelDurations.length === panels.length;
+  // Any user-touched audio control (custom start offset OR custom per-panel
+  // durations) overrides the "fit slideshow to song length" auto-sync.
+  const syncToAudio =
+    !hasPerPanel && audioStartSec === 0 && (opts.syncToAudio ?? !!audioBuffer);
 
   // ─── Compute exact, equal per-slide duration ──────────────────────────────
   //
@@ -443,6 +466,13 @@ async function exportViaWebCodecs(
   } else {
     secondsPerPanel = opts.secondsPerPanel ?? 3;
   }
+  // Per-panel frame counts. With overrides, each panel gets its own integer
+  // frame count (>= 2 so the crossfade math doesn't divide by zero). Without
+  // overrides, every panel gets the same `framesPerPanel` derived above —
+  // identical to the old behaviour.
+  const framesPerPanelArr: number[] = hasPerPanel
+    ? opts.panelDurations!.map((s) => Math.max(2, Math.round(Math.max(0.1, s) * fps)))
+    : new Array(panels.length).fill(Math.max(2, Math.round(secondsPerPanel * fps)));
 
   const wc = globalThis as unknown as WebCodecsGlobals;
   const mp4 = await import("mp4-muxer");
@@ -485,14 +515,10 @@ async function exportViaWebCodecs(
     framerate: fps,
   });
 
-  const framesPerPanel = Math.max(2, Math.round(secondsPerPanel * fps));
-  // Crossfade lasts ~0.6s, but never more than 1/3 of a panel's screen time so
-  // very short panels still have a recognisable "hold" phase before transitioning.
-  const transitionFrames = Math.max(
-    1,
-    Math.min(Math.round(0.6 * fps), Math.floor(framesPerPanel / 3)),
-  );
-  const totalFrames = framesPerPanel * panels.length;
+  // Crossfade lasts ~0.6s, but never more than 1/3 of the SHORTER panel's
+  // screen time so very short panels still have a recognisable hold phase.
+  const baseTransitionFrames = Math.round(0.6 * fps);
+  const totalFrames = framesPerPanelArr.reduce((a, b) => a + b, 0);
   const frameDurationUs = Math.round(1_000_000 / fps);
   const keyframeEvery = fps * 2; // 2-second GOP
 
@@ -525,6 +551,15 @@ async function exportViaWebCodecs(
   let frameIdx = 0;
   for (let i = 0; i < panels.length; i++) {
     const hasNext = i < panels.length - 1;
+    const framesPerPanel = framesPerPanelArr[i];
+    const nextFrames = hasNext ? framesPerPanelArr[i + 1] : framesPerPanel;
+    // Transition is bounded by 1/3 of THIS panel and the NEXT, so wildly
+    // different per-panel durations don't produce a transition longer than
+    // either side's hold phase.
+    const transitionFrames = Math.max(
+      1,
+      Math.min(baseTransitionFrames, Math.floor(framesPerPanel / 3), Math.floor(nextFrames / 3)),
+    );
     const holdFrames = hasNext ? framesPerPanel - transitionFrames : framesPerPanel;
 
     // Hold phase: panel i alone, full opacity.
@@ -579,7 +614,10 @@ async function exportViaWebCodecs(
     // Either way the produced MP4's video and audio tracks share an identical
     // duration, which is the only way to guarantee perfect lockstep playback.
     const targetSamples = Math.round(expectedDurationSec * sr);
-    const sourceSamples = audioBuffer.length;
+    const startSample = Math.max(0, Math.min(audioBuffer.length, Math.round(audioStartSec * sr)));
+    const sourceAvailable = Math.max(0, audioBuffer.length - startSample);
+    const fadeSamples = Math.min(targetSamples, Math.round(audioFadeOutSec * sr));
+    const fadeStart = targetSamples - fadeSamples;
     const chData: Float32Array[] = [];
     for (let c = 0; c < channels; c++) chData.push(audioBuffer.getChannelData(c));
 
@@ -588,12 +626,22 @@ async function exportViaWebCodecs(
       const planar = new Float32Array(numberOfFrames * channels);
       for (let c = 0; c < channels; c++) {
         const dst = planar.subarray(c * numberOfFrames, (c + 1) * numberOfFrames);
-        if (offset < sourceSamples) {
-          const copyLen = Math.min(numberOfFrames, sourceSamples - offset);
-          dst.set(chData[c].subarray(offset, offset + copyLen));
+        if (offset < sourceAvailable) {
+          const copyLen = Math.min(numberOfFrames, sourceAvailable - offset);
+          dst.set(chData[c].subarray(startSample + offset, startSample + offset + copyLen));
           // remaining samples in dst are already 0 (silence) — Float32Array default.
         }
         // else: entire chunk is silent padding, left as zeros.
+        // Apply linear fade-out across the last `fadeSamples` of the output.
+        if (fadeSamples > 0) {
+          for (let s = 0; s < numberOfFrames; s++) {
+            const globalIdx = offset + s;
+            if (globalIdx >= fadeStart) {
+              const gain = Math.max(0, 1 - (globalIdx - fadeStart) / fadeSamples);
+              dst[s] *= gain;
+            }
+          }
+        }
       }
       const timestamp = Math.round((offset / sr) * 1_000_000);
       const ad = new wc.AudioData({
@@ -632,7 +680,7 @@ async function exportViaWebCodecs(
     expectedDurationSec,
     hasAudio: !!audioBuffer,
     panelCount: panels.length,
-    secondsPerPanel: framesPerPanel / fps,
+    secondsPerPanel: framesPerPanelArr[0] / fps,
     videoToleranceSec: 1 / fps,
     audioToleranceSec: Math.max(1 / fps, 2 * aacGranularitySec),
   });
@@ -655,12 +703,27 @@ async function exportViaMediaRecorder(
   audioBuffer: AudioBuffer | null,
 ): Promise<VideoExportResult> {
   const { title, panels, fps = 30, width = 1080, height = 1920, onProgress } = opts;
-  const syncToAudio = opts.syncToAudio ?? !!audioBuffer;
+  const audioStartSec = Math.max(0, opts.audioStartSec ?? 0);
+  const audioFadeOutSec = Math.max(0, opts.audioFadeOutSec ?? 2);
+  const hasPerPanel =
+    Array.isArray(opts.panelDurations) && opts.panelDurations.length === panels.length;
+  const syncToAudio =
+    !hasPerPanel && audioStartSec === 0 && (opts.syncToAudio ?? !!audioBuffer);
   let secondsPerPanel = opts.secondsPerPanel ?? 3;
   let audioDuration = 0;
   if (audioBuffer) {
     audioDuration = audioBuffer.duration;
     if (syncToAudio) secondsPerPanel = Math.max(0.1, audioDuration / panels.length);
+  }
+  // Per-panel duration in seconds. Cumulative end times let us pick the
+  // current panel by elapsed wall-clock in O(panels) without integer math drift.
+  const panelDurs: number[] = hasPerPanel
+    ? opts.panelDurations!.map((s) => Math.max(0.1, s))
+    : new Array(panels.length).fill(secondsPerPanel);
+  const panelEnds: number[] = [];
+  {
+    let acc = 0;
+    for (const d of panelDurs) { acc += d; panelEnds.push(acc); }
   }
 
   if (typeof MediaRecorder === "undefined") {
@@ -695,11 +758,16 @@ async function exportViaMediaRecorder(
   if (!videoTrack) throw new Error("Could not create video track from canvas.");
   const tracks: MediaStreamTrack[] = [videoTrack];
   let audioSource: AudioBufferSourceNode | null = null;
+  let audioGain: GainNode | null = null;
   if (audioCtx && audioBuffer) {
     const dest = audioCtx.createMediaStreamDestination();
     audioSource = audioCtx.createBufferSource();
     audioSource.buffer = audioBuffer;
-    audioSource.connect(dest);
+    // GainNode lets us schedule a linear fade-out at the tail of the muxed
+    // audio (matches the WebCodecs path's sample-level fade exactly in shape).
+    audioGain = audioCtx.createGain();
+    audioGain.gain.value = 1;
+    audioSource.connect(audioGain).connect(dest);
     tracks.push(...dest.stream.getAudioTracks());
   }
   const combinedStream = new MediaStream(tracks);
@@ -719,14 +787,25 @@ async function exportViaMediaRecorder(
   const framesPerPanel = Math.max(1, Math.round(secondsPerPanel * fps));
   const expectedDurationSec = audioBuffer && syncToAudio
     ? audioDuration
-    : (framesPerPanel * panels.length) / fps;
+    : (hasPerPanel ? panelEnds[panelEnds.length - 1] : (framesPerPanel * panels.length) / fps);
 
   if (audioCtx && audioCtx.state === "suspended") {
     try { await audioCtx.resume(); } catch { /* best effort */ }
   }
   recorder.start();
   const recordStartMs = performance.now();
-  if (audioSource) audioSource.start();
+  if (audioSource && audioCtx) {
+    // start(when, offset) — `offset` is the seconds-into-the-buffer where
+    // playback begins. Lets us mux any 60-second window of a 10-minute song.
+    const startOffset = Math.min(audioStartSec, audioBuffer?.duration ?? 0);
+    audioSource.start(0, startOffset);
+    if (audioGain && audioFadeOutSec > 0 && expectedDurationSec > 0) {
+      const fade = Math.min(audioFadeOutSec, expectedDurationSec);
+      const t0 = audioCtx.currentTime;
+      audioGain.gain.setValueAtTime(1, t0 + Math.max(0, expectedDurationSec - fade));
+      audioGain.gain.linearRampToValueAtTime(0, t0 + expectedDurationSec);
+    }
+  }
 
   // Self-correcting wall-clock draw loop. Each tick we look at the REAL
   // elapsed wall time (not a frame counter) to decide which panel to show.
@@ -738,7 +817,17 @@ async function exportViaMediaRecorder(
   // visibility), guaranteeing we still terminate at expectedDurationSec.
   // Crossfade duration: ~0.6 s, but never more than 1/3 of a panel so very
   // short panels still have a recognisable hold phase before dissolving.
-  const transitionSec = Math.min(0.6, secondsPerPanel / 3);
+  const baseTransitionSec = 0.6;
+
+  // Look up which panel is on-screen at `elapsedSec`. Returns the panel index
+  // plus where we are inside that panel's slot.
+  function panelAt(elapsedSec: number): { idx: number; tIntoPanel: number; panelLen: number } {
+    let idx = 0;
+    while (idx < panelEnds.length - 1 && elapsedSec >= panelEnds[idx]) idx++;
+    const panelLen = panelDurs[idx];
+    const panelStart = idx === 0 ? 0 : panelEnds[idx - 1];
+    return { idx, tIntoPanel: elapsedSec - panelStart, panelLen };
+  }
 
   await new Promise<void>((resolve) => {
     let done = false;
@@ -758,24 +847,17 @@ async function exportViaMediaRecorder(
         resolve();
         return;
       }
-      const idx = Math.min(
-        panels.length - 1,
-        Math.floor(elapsedSec / secondsPerPanel),
-      );
-      // Where we are inside the current panel's slot, 0 .. secondsPerPanel.
-      const tIntoPanel = elapsedSec - idx * secondsPerPanel;
+      const { idx, tIntoPanel, panelLen } = panelAt(elapsedSec);
       const hasNext = idx < panels.length - 1;
-      // Last `transitionSec` of every panel (except the final one) dissolves
-      // into the next panel. We redraw every tick during the transition so the
-      // alpha smoothly ramps in real time — this is why we no longer cache
-      // `lastDrawnIdx`; the hold phase still effectively no-ops at the canvas
-      // level since we're drawing the same pixels, but the transition phase
-      // genuinely changes pixels each frame.
-      const inTransition = hasNext && tIntoPanel >= secondsPerPanel - transitionSec;
+      const nextLen = hasNext ? panelDurs[idx + 1] : panelLen;
+      // Transition bounded by 1/3 of THIS and the NEXT panel so wildly
+      // different durations don't yield a fade longer than either side's hold.
+      const transitionSec = Math.min(baseTransitionSec, panelLen / 3, nextLen / 3);
+      const inTransition = hasNext && tIntoPanel >= panelLen - transitionSec;
       if (inTransition) {
         const t = Math.min(
           1,
-          (tIntoPanel - (secondsPerPanel - transitionSec)) / transitionSec,
+          (tIntoPanel - (panelLen - transitionSec)) / transitionSec,
         );
         drawCrossfade(
           ctx, width, height,

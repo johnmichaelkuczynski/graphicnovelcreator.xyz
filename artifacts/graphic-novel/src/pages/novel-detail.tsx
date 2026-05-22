@@ -41,6 +41,21 @@ export default function NovelDetail() {
   const regeneratePanel = useRegeneratePanel();
   const [regeneratingIdx, setRegeneratingIdx] = useState<number | null>(null);
   const [secondsPerPanel, setSecondsPerPanel] = useState<number>(3);
+  // Audio trim: which second of the source track the music starts on.
+  const [audioStartSec, setAudioStartSec] = useState<number>(0);
+  // Linear fade-out at tail of muxed audio. 2s default — long enough to sound
+  // intentional, short enough not to eat half the song on a short clip.
+  const [audioFadeOutSec, setAudioFadeOutSec] = useState<number>(2);
+  // Per-panel duration overrides (keyed by panel.idx). Any panel not present
+  // here falls back to `secondsPerPanel`. Stored as numbers in seconds.
+  const [panelDurationOverrides, setPanelDurationOverrides] = useState<Record<number, number>>({});
+  // Reset start offset if user swaps to a shorter track (otherwise we'd be
+  // pointing past the end of the new song).
+  useEffect(() => {
+    if (audioTrack && audioStartSec > Math.max(0, audioTrack.durationSec - 1)) {
+      setAudioStartSec(0);
+    }
+  }, [audioTrack, audioStartSec]);
 
   const handleRegeneratePanel = (panelIdx: number) => {
     if (!id) return;
@@ -163,14 +178,23 @@ export default function NovelDetail() {
     setVideoProgress(0);
     setExportNotice("");
     try {
+      const completedPanels = novel.panels.filter((p) => p.status === "done" && p.imageDataUrl);
+      // Build the per-panel duration array iff the user actually overrode at
+      // least one panel — otherwise leave undefined so the export keeps using
+      // the global `secondsPerPanel` (and its auto-sync-to-audio behaviour).
+      const hasAnyOverride = completedPanels.some((p) => panelDurationOverrides[p.idx] != null);
+      const panelDurations = hasAnyOverride
+        ? completedPanels.map((p) => panelDurationOverrides[p.idx] ?? secondsPerPanel)
+        : undefined;
       const result = await exportNovelVideo({
         title: novel.title || "Untitled Issue",
-        panels: novel.panels
-          .filter((p) => p.status === "done" && p.imageDataUrl)
-          .map((p) => ({ caption: p.caption || "", imageDataUrl: p.imageDataUrl! })),
+        panels: completedPanels.map((p) => ({ caption: p.caption || "", imageDataUrl: p.imageDataUrl! })),
         secondsPerPanel,
+        panelDurations,
         audioBlob: audioTrack?.blob,
         syncToAudio: !!audioTrack,
+        audioStartSec,
+        audioFadeOutSec,
         onProgress: (p) => setVideoProgress(p),
       });
       // Persist to IndexedDB so it survives reloads and stays visible in the Saved
@@ -359,11 +383,12 @@ export default function NovelDetail() {
           <h3 className="font-bold font-serif uppercase tracking-wider">Soundtrack for MP4 Export</h3>
         </div>
         {audioTrack ? (
+          <>
           <div className="flex items-center justify-between gap-4 border-2 border-border p-3 bg-background">
             <div className="font-mono text-sm min-w-0">
               <div className="font-bold truncate">{audioTrack.filename}</div>
               <div className="text-muted-foreground text-xs mt-1">
-                {Math.floor(audioTrack.durationSec / 60)}m {Math.round(audioTrack.durationSec % 60)}s · MP4 will be muxed to match this length
+                {Math.floor(audioTrack.durationSec / 60)}m {Math.round(audioTrack.durationSec % 60)}s · source track
               </div>
             </div>
             <button
@@ -375,6 +400,46 @@ export default function NovelDetail() {
               <X className="w-4 h-4" />
             </button>
           </div>
+          {/* Audio trim — pick which slice of the source song gets muxed. */}
+          <div className="border-2 border-border p-3 bg-background space-y-2">
+            <label className="font-mono text-xs uppercase tracking-widest flex justify-between items-center">
+              <span>Start music at</span>
+              <span className="text-primary font-bold">
+                {Math.floor(audioStartSec / 60)}m {Math.floor(audioStartSec % 60)}s
+              </span>
+            </label>
+            <input
+              type="range"
+              min={0}
+              max={Math.max(0, Math.floor(audioTrack.durationSec - 1))}
+              step={1}
+              value={Math.min(audioStartSec, Math.max(0, Math.floor(audioTrack.durationSec - 1)))}
+              onChange={(e) => setAudioStartSec(Number(e.target.value))}
+              className="w-full"
+              data-testid="input-audio-start"
+            />
+            <p className="font-mono text-xs text-muted-foreground">
+              Pick the moment in the song where the video should start. Anything before this is skipped. Changing this disables auto-fit-to-song-length and uses your panel timings instead.
+            </p>
+            <label className="font-mono text-xs uppercase tracking-widest flex justify-between items-center pt-2">
+              <span>Fade out over</span>
+              <span className="text-primary font-bold">{audioFadeOutSec}s</span>
+            </label>
+            <input
+              type="range"
+              min={0}
+              max={10}
+              step={1}
+              value={audioFadeOutSec}
+              onChange={(e) => setAudioFadeOutSec(Number(e.target.value))}
+              className="w-full"
+              data-testid="input-audio-fadeout"
+            />
+            <p className="font-mono text-xs text-muted-foreground">
+              Linear fade-out at the end of the muxed audio so the music doesn't slam to silence. 0 = hard cut.
+            </p>
+          </div>
+          </>
         ) : (
           <>
             <p className="font-mono text-xs text-muted-foreground">
@@ -400,8 +465,22 @@ export default function NovelDetail() {
             data-testid="input-seconds-per-panel"
           />
           <p className="font-mono text-xs text-muted-foreground">
-            Each panel holds for this long in the MP4. Default 3s. Crank it up so a short comic still covers a long song. When audio is attached, the export auto-stretches to match the song length anyway.
+            Default screen-time per panel in the MP4. Override individual panels below the comic. When audio is attached AND you haven't touched the trim or per-panel timings, the export auto-stretches to match the song length.
           </p>
+          {Object.keys(panelDurationOverrides).length > 0 && (
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <p className="font-mono text-xs text-primary">
+                {Object.keys(panelDurationOverrides).length} panel(s) have custom timings.
+              </p>
+              <button
+                type="button"
+                onClick={() => setPanelDurationOverrides({})}
+                className="font-mono text-xs uppercase underline"
+              >
+                Reset all
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -548,7 +627,47 @@ export default function NovelDetail() {
               )}
             </div>
             {!isGenerating && (panel.status === 'done' || panel.status === 'failed') && (
-              <div className="print:hidden flex justify-end">
+              <div className="print:hidden flex flex-wrap items-center justify-end gap-3">
+                {panel.status === 'done' && (
+                  <label className="font-mono text-xs uppercase tracking-widest flex items-center gap-2">
+                    <span className="text-muted-foreground">Screen time:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={60}
+                      step={1}
+                      value={panelDurationOverrides[panel.idx] ?? secondsPerPanel}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setPanelDurationOverrides((prev) => {
+                          const next = { ...prev };
+                          if (!Number.isFinite(v) || v <= 0) delete next[panel.idx];
+                          else next[panel.idx] = Math.max(1, Math.min(60, Math.round(v)));
+                          return next;
+                        });
+                      }}
+                      className="w-16 border-2 border-border bg-background px-2 py-1 font-mono text-xs"
+                      data-testid={`input-panel-duration-${panel.idx}`}
+                    />
+                    <span className="text-muted-foreground">s</span>
+                    {panelDurationOverrides[panel.idx] != null && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPanelDurationOverrides((prev) => {
+                            const next = { ...prev };
+                            delete next[panel.idx];
+                            return next;
+                          })
+                        }
+                        className="text-xs underline text-muted-foreground"
+                        title="Use the global default"
+                      >
+                        reset
+                      </button>
+                    )}
+                  </label>
+                )}
                 <Button
                   type="button"
                   variant="outline"
