@@ -18,6 +18,7 @@ import {
   readAudioDuration,
   type AudioTrack,
 } from "@/lib/audio-track";
+import { AudioDropzone } from "@/components/audio-dropzone";
 import { Music, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
@@ -315,12 +316,7 @@ export default function NovelDetail() {
             <p className="font-mono text-xs text-muted-foreground">
               Attach an MP3 or WAV and the exported MP4 will exactly match its length, with the audio muxed in. Great for music videos.
             </p>
-            <Input
-              type="file"
-              accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/wave,audio/*,.mp3,.wav"
-              onChange={(e) => handleAudioFile(e.target.files?.[0] ?? null)}
-              className="font-mono"
-            />
+            <AudioDropzone onFile={(f) => handleAudioFile(f)} />
           </>
         )}
         {audioError && <p className="font-mono text-xs text-destructive">{audioError}</p>}

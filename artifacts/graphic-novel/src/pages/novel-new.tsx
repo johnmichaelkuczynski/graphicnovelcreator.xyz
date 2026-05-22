@@ -23,6 +23,7 @@ import { ArtStylePicker } from "@/components/art-style-picker";
 import { SpecificationsPresets } from "@/components/specifications-presets";
 import { ProjectDrafts } from "@/components/project-drafts";
 import { readAudioDuration, setPendingAudio, setNovelAudio, type AudioTrack } from "@/lib/audio-track";
+import { AudioDropzone } from "@/components/audio-dropzone";
 import { Music, X } from "lucide-react";
 
 const EXPLICIT_KEY = "graphic-novel:explicit-default";
@@ -255,12 +256,7 @@ export default function NovelNew() {
                 </button>
               </div>
             ) : (
-              <Input
-                type="file"
-                accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/wave,audio/*,.mp3,.wav"
-                onChange={(e) => handleAudioFile(e.target.files?.[0] ?? null)}
-                className="font-mono"
-              />
+              <AudioDropzone onFile={(f) => handleAudioFile(f)} />
             )}
             {audioError && <p className="font-mono text-sm text-destructive">{audioError}</p>}
           </div>
