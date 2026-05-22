@@ -164,7 +164,7 @@ export default function Diagnostics() {
         )}
         {!sysReport && !sysError && !sysLoading && (
           <div className="border-4 border-dashed border-border p-8 text-center font-mono text-sm text-muted-foreground uppercase tracking-wider">
-            Press Run to check server, env vars, DB, schema, Venice + DeepSeek APIs.
+            Press Run to check server, env vars, DB, schema, and Venice APIs.
           </div>
         )}
       </section>

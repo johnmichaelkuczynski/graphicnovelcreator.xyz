@@ -5,14 +5,12 @@ import { logger } from "./logger";
 export type ZhiId = "zhi1" | "zhi2" | "zhi3" | "zhi4";
 
 export const MODELS: Array<{ id: ZhiId; label: string; provider: string; supportsExplicit: boolean }> = [
-  { id: "zhi1", label: "Zhi 1", provider: "DeepSeek", supportsExplicit: false },
   { id: "zhi2", label: "Zhi 2", provider: "Anthropic Claude", supportsExplicit: false },
   { id: "zhi3", label: "Zhi 3", provider: "OpenAI ChatGPT", supportsExplicit: false },
   { id: "zhi4", label: "Zhi 4", provider: "Venice", supportsExplicit: true },
 ];
 
 const VENICE_BASE = "https://api.venice.ai/api/v1";
-const DEEPSEEK_BASE = "https://api.deepseek.com";
 
 const openaiClient = process.env.AI_INTEGRATIONS_OPENAI_API_KEY
   ? new OpenAI({
@@ -27,28 +25,6 @@ const anthropicClient = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY
       baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
     })
   : null;
-
-async function callDeepSeek(system: string, user: string): Promise<string> {
-  if (!process.env.DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY not set");
-  const res = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: "deepseek-chat",
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      max_tokens: 8000,
-    }),
-  });
-  if (!res.ok) throw new Error(`DeepSeek error ${res.status}: ${await res.text()}`);
-  const json = (await res.json()) as { choices: Array<{ message: { content: string } }> };
-  return json.choices[0]?.message.content ?? "";
-}
 
 async function callAnthropic(system: string, user: string): Promise<string> {
   if (!anthropicClient) throw new Error("Anthropic not configured");
@@ -107,8 +83,8 @@ export async function generateText(opts: {
 }): Promise<string> {
   // User directive: ALL text generation goes through Venice, period. The
   // selected ZhiId is ignored at the routing layer (kept in the type so the
-  // UI/DB don't have to change). DeepSeek/Anthropic/OpenAI are intentionally
-  // unreachable from this function.
+  // UI/DB don't have to change). Anthropic/OpenAI are intentionally
+  // unreachable from this function. DeepSeek has been removed entirely.
   void opts.model;
   void opts.explicit;
   logger.info({ requestedModel: opts.model, routedTo: "venice" }, "Generating text");

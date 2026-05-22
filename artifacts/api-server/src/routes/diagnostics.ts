@@ -5,7 +5,7 @@
 //                                    and tearing down a synthetic 1-panel novel.
 //
 // Adapted from the PHIL-101 / SYSTEMS SCIENCE 101 blueprint for this app's stack
-// (Venice + DeepSeek replace Anthropic + GPTZero; no auth layer to exercise).
+// (Venice only; no auth layer to exercise).
 //
 // SECURITY: both endpoints are unauthenticated during beta. Before launching publicly,
 // gate them behind an admin guard — the functional check writes to the DB and bills
@@ -58,7 +58,7 @@ router.get("/diagnostics", async (_req, res): Promise<void> => {
   // 2. Environment variables.
   {
     const required = ["DATABASE_URL", "VENICE_API_KEY"] as const;
-    const optional = ["DEEPSEEK_API_KEY", "SESSION_SECRET", "PORT", "NODE_ENV"] as const;
+    const optional = ["SESSION_SECRET", "PORT", "NODE_ENV"] as const;
     const missing = required.filter((k) => !process.env[k]);
     const presentOptional = optional.filter((k) => !!process.env[k]);
     checks.push({
@@ -136,39 +136,7 @@ router.get("/diagnostics", async (_req, res): Promise<void> => {
     });
   }
 
-  // 6. DeepSeek API (optional — warn if no key, pass on success).
-  {
-    const r = await timed(async () => {
-      if (!process.env["DEEPSEEK_API_KEY"]) return null;
-      const res = await fetch("https://api.deepseek.com/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env["DEEPSEEK_API_KEY"]}`,
-        },
-        body: JSON.stringify({
-          model: "deepseek-chat",
-          messages: [{ role: "user", content: "Say OK" }],
-          max_tokens: 4,
-        }),
-      });
-      if (!res.ok) throw new Error(`DeepSeek HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
-      const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-      return (body.choices?.[0]?.message?.content ?? "").slice(0, 40);
-    });
-    checks.push({
-      name: "DeepSeek API (text)",
-      status: r.error ? "fail" : r.value === null ? "warn" : "pass",
-      ms: r.ms,
-      detail: r.error
-        ? errMsg(r.error)
-        : r.value === null
-          ? "DEEPSEEK_API_KEY not set — DeepSeek-backed Zhi models will fail"
-          : `Round-trip OK · reply="${r.value}"`,
-    });
-  }
-
-  // 7. Venice image API (presence-only — actual generation is expensive).
+  // 6. Venice image API (presence-only — actual generation is expensive).
   {
     const r = await timed(async () => {
       if (!process.env["VENICE_API_KEY"]) throw new Error("VENICE_API_KEY not set");

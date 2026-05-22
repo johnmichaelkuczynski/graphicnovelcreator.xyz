@@ -1,6 +1,6 @@
 // End-to-end "walk" against the running API over loopback. Exercises the real HTTP stack
 // (JSON parsing, validation, routes, DB writes) so regressions in any layer surface here.
-// Costs a single text round-trip (panel-plan call) via Venice/DeepSeek for the smallest
+// Costs a single text round-trip (panel-plan call) via Venice for the smallest
 // possible novel (1 panel) — image generation is fired but we don't wait on it.
 //
 // Adapted from the PHIL-101 blueprint to this app's domain (graphic novels, no auth).

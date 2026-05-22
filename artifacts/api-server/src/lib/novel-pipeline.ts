@@ -320,7 +320,7 @@ Return the JSON array of exactly ${opts.panelCount} objects now.`;
   }
 
   // Anchor enforcement: even with explicit instructions in both the system and
-  // user prompts, DeepSeek frequently invents a scene-setting "establishing
+  // user prompts, the text model frequently invents a scene-setting "establishing
   // shot" panel 1 (e.g. "In the dimly lit room, a heroic film noir man sits
   // at a desk..." when the source is actually an essay about truth). This
   // post-hoc check measures token overlap between the first/last panel
