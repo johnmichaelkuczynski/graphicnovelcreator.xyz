@@ -17,6 +17,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { ReferenceImagesUploader, ReferenceImage } from "@/components/reference-images-uploader";
+import { SpecificationsPresets } from "@/components/specifications-presets";
 import { popRefinedRefs } from "@/lib/refined-refs";
 import { ArtStylePicker } from "@/components/art-style-picker";
 
@@ -135,6 +136,7 @@ export default function ImageNovelNew() {
                   <FormControl>
                     <Textarea placeholder="e.g. High action, fast paced..." className="h-32" {...field} />
                   </FormControl>
+                  <SpecificationsPresets value={field.value} onLoad={(t) => field.onChange(t)} />
                   <FormMessage />
                 </FormItem>
               )}

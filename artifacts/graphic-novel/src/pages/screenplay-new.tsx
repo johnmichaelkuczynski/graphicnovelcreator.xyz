@@ -15,6 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { FileUploader } from "@/components/file-uploader";
+import { SpecificationsPresets } from "@/components/specifications-presets";
 
 const formSchema = z.object({
   title: z.string().optional(),
@@ -119,6 +120,7 @@ export default function ScreenplayNew() {
                 <FormControl>
                   <Textarea placeholder="e.g. Frame this as a documentary with an unseen narrator..." className="h-32" {...field} />
                 </FormControl>
+                <SpecificationsPresets value={field.value} onLoad={(t) => field.onChange(t)} />
                 <FormMessage />
               </FormItem>
             )}

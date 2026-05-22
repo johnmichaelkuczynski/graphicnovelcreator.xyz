@@ -20,6 +20,7 @@ import { FileUploader } from "@/components/file-uploader";
 import { ReferenceImagesUploader, ReferenceImage } from "@/components/reference-images-uploader";
 import { popRefinedRefs } from "@/lib/refined-refs";
 import { ArtStylePicker } from "@/components/art-style-picker";
+import { SpecificationsPresets } from "@/components/specifications-presets";
 import { readAudioDuration, setPendingAudio, setNovelAudio, type AudioTrack } from "@/lib/audio-track";
 import { Music, X } from "lucide-react";
 
@@ -165,6 +166,7 @@ export default function NovelNew() {
                   <FormControl>
                     <Textarea placeholder="e.g. A noir detective story. Three main characters..." className="h-32" {...field} />
                   </FormControl>
+                  <SpecificationsPresets value={field.value} onLoad={(t) => field.onChange(t)} />
                   <FormMessage />
                 </FormItem>
               )}
