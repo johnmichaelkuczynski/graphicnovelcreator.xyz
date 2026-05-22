@@ -439,9 +439,6 @@ export default function NovelDetail() {
                   <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground">Drawing Panel {idx + 1}...</p>
                 </div>
               )}
-              <div className="absolute bottom-2 right-2 bg-background border-2 border-border px-2 py-1 font-mono text-xs font-bold">
-                {idx + 1}
-              </div>
             </div>
           </motion.div>
         ))}
