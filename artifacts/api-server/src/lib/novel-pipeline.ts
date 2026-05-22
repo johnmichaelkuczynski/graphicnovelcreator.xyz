@@ -200,9 +200,27 @@ Rules:
     (opts.referenceDescription
       ? "exactly matching the STYLE block from the reference images above — do not impose any default cartoon, ink-and-wash, or stylized look; mirror the medium, palette, line-quality, and realism level of the reference"
       : "cinematic, richly detailed illustration")
-  }.${specBlock}`;
+  }.
 
-  const user = `SOURCE TEXT:\n${opts.sourceText}\n\nReturn the JSON array now.`;
+═══════════════════════════════════════════════════════════════
+ABSOLUTE STARTING RULE — VIOLATING THIS RUINS THE WHOLE NOVEL
+═══════════════════════════════════════════════════════════════
+Panel 1's caption MUST be drawn from the OPENING WORDS of the SOURCE TEXT itself. Do NOT invent a scene-setting preamble, an establishing shot, an opening narration, a "title-card" sentence, or a mood-setting intro paragraph that does not exist verbatim in the source. The author already wrote their opening — your job is to illustrate it, not to write a new one. The very first caption must paraphrase (or quote) the literal first sentence(s) of the source text.
+
+FORBIDDEN panel-1 patterns (these are the "bullshit preambles" we are explicitly banning):
+  ✗ "In the shadows of a dimly lit alley..."          (invented atmospheric opener)
+  ✗ "Our story begins in..."                          (narrator framing)
+  ✗ "Once upon a time..."                             (fairy-tale framing)
+  ✗ "The year is 19XX. The city is..."                (invented title card)
+  ✗ "Welcome to the world of..."                      (invented intro)
+  ✗ "It was a dark and stormy night..."               (invented mood opener)
+  ✗ Any opening sentence whose words/events do not appear in the source text's first paragraph.
+
+REQUIRED behavior: read the source text's first 1–3 sentences. Panel 1's caption must depict THOSE words, and panel 1's imagePrompt must depict the scene those words describe. If the source opens with dialogue or action mid-scene, you open with dialogue or action mid-scene — do not back-fill an establishing shot before it.
+
+The SAME RULE applies in reverse to the FINAL panel: do not invent a closing "the end" / "and so..." epilogue caption that does not exist in the source. The last panel illustrates the source's last sentences.${specBlock}`;
+
+  const user = `SOURCE TEXT:\n${opts.sourceText}\n\nReminder: Panel 1's caption must illustrate the FIRST SENTENCE(S) of the SOURCE TEXT above — do NOT invent an opening establishing-shot / mood-setting / "in the shadows..." preamble that isn't in the source. The last panel must illustrate the source's last sentences. Return the JSON array now.`;
 
   const raw = await generateText({
     model: opts.textModel,
