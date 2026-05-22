@@ -4,4 +4,3 @@
 // which collides with the zod consts under `export *`. Consumers should
 // derive types from the zod schemas via z.infer<typeof X> instead.
 export * from "./generated/api";
-export * from './generated/types';

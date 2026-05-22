@@ -251,6 +251,42 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
 
+  /novels/{id}/panels/{panelIdx}/regenerate:
+    post:
+      operationId: regeneratePanel
+      tags: [novels]
+      summary: Regenerate a single panel by its index, leaving all other panels untouched.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+        - in: path
+          name: panelIdx
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Novel"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Novel is currently being generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
   /screenplays:
     get:
       operationId: listScreenplays

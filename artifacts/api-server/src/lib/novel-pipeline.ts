@@ -892,6 +892,46 @@ async function regenerateSpecificPanels(
     .where(eq(novelsTable.id, novelId));
 }
 
+// Regenerate a single panel by its idx. Reuses the same prompt scaffolding
+// as repairNovel/regenerateSpecificPanels but targets exactly one panel.
+export async function regenerateSinglePanel(
+  novelId: number,
+  panelIdx: number,
+): Promise<void> {
+  const [novel] = await db.select().from(novelsTable).where(eq(novelsTable.id, novelId));
+  if (!novel) throw new Error("Novel not found");
+  if (novel.status === "pending" || novel.status === "generating") {
+    throw new NovelBusyError(novel.status);
+  }
+  const [panel] = await db
+    .select()
+    .from(panelsTable)
+    .where(and(eq(panelsTable.novelId, novelId), eq(panelsTable.idx, panelIdx)));
+  if (!panel) throw new Error("Panel not found");
+
+  await db
+    .update(panelsTable)
+    .set({ status: "pending", error: null })
+    .where(eq(panelsTable.id, panel.id));
+  await db
+    .update(novelsTable)
+    .set({ status: "generating", error: null })
+    .where(eq(novelsTable.id, novelId));
+
+  void regenerateSpecificPanels(novel, [
+    { id: panel.id, idx: panel.idx, imagePrompt: panel.imagePrompt },
+  ]).catch((err) => {
+    logger.error(
+      { novelId, panelIdx, err: err instanceof Error ? err.message : err },
+      "regenerateSinglePanel crashed",
+    );
+    void db
+      .update(novelsTable)
+      .set({ status: "failed", error: err instanceof Error ? err.message : String(err) })
+      .where(eq(novelsTable.id, novelId));
+  });
+}
+
 export function startNovelGeneration(novelId: number): void {
   runNovelGeneration(novelId).catch((err) => {
     logger.error({ novelId, err }, "Background novel generation crashed");

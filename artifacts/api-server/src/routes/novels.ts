@@ -9,7 +9,7 @@ import {
   ListNovelsResponse,
   RegenerateNovelParams,
 } from "@workspace/api-zod";
-import { startNovelGeneration, repairNovel, NovelBusyError } from "../lib/novel-pipeline";
+import { startNovelGeneration, repairNovel, NovelBusyError, regenerateSinglePanel } from "../lib/novel-pipeline";
 import { inArray } from "drizzle-orm";
 import { MODELS, type ZhiId } from "../lib/ai";
 
@@ -288,6 +288,67 @@ router.post("/novels/:id/repair", async (req, res): Promise<void> => {
     }
     res.status(500).json({ error: msg });
   }
+});
+
+// Regenerate exactly one panel by idx. The rest of the novel is left alone.
+router.post("/novels/:id/panels/:panelIdx/regenerate", async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  const panelIdx = Number(req.params.panelIdx);
+  if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(panelIdx) || panelIdx < 0) {
+    res.status(400).json({ error: "Invalid id or panelIdx" });
+    return;
+  }
+  try {
+    await regenerateSinglePanel(id, panelIdx);
+  } catch (err) {
+    if (err instanceof NovelBusyError) {
+      res.status(409).json({ error: err.message });
+      return;
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === "Novel not found" || msg === "Panel not found") {
+      res.status(404).json({ error: msg });
+      return;
+    }
+    res.status(500).json({ error: msg });
+    return;
+  }
+
+  const [novel] = await db.select().from(novelsTable).where(eq(novelsTable.id, id));
+  if (!novel) {
+    res.status(404).json({ error: "Novel not found" });
+    return;
+  }
+  const panels = await db
+    .select()
+    .from(panelsTable)
+    .where(eq(panelsTable.novelId, id))
+    .orderBy(asc(panelsTable.idx));
+
+  res.json(
+    GetNovelResponse.parse({
+      id: novel.id,
+      title: novel.title,
+      sourceText: novel.sourceText,
+      specifications: novel.specifications,
+      panelCount: novel.panelCount,
+      textModel: novel.textModel,
+      artStyle: novel.artStyle ?? null,
+      explicit: novel.explicit,
+      status: novel.status,
+      error: novel.error ?? null,
+      createdAt: novel.createdAt.toISOString(),
+      panels: panels.map((p) => ({
+        id: p.id,
+        idx: p.idx,
+        caption: p.caption,
+        imagePrompt: p.imagePrompt,
+        imageDataUrl: p.imageDataUrl,
+        status: p.status,
+        error: p.error,
+      })),
+    }),
+  );
 });
 
 router.delete("/novels/:id", async (req, res): Promise<void> => {

@@ -781,6 +781,78 @@ export const useRepairNovel = <TError = ErrorType<ApiError>,
       return useMutation(getRepairNovelMutationOptions(options));
     }
 
+export const getRegeneratePanelUrl = (id: number,
+    panelIdx: number,) => {
+
+
+
+
+  return `/api/novels/${id}/panels/${panelIdx}/regenerate`
+}
+
+/**
+ * @summary Regenerate a single panel by its index, leaving all other panels untouched.
+ */
+export const regeneratePanel = async (id: number,
+    panelIdx: number, options?: RequestInit): Promise<Novel> => {
+
+  return customFetch<Novel>(getRegeneratePanelUrl(id,panelIdx),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRegeneratePanelMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof regeneratePanel>>, TError,{id: number;panelIdx: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof regeneratePanel>>, TError,{id: number;panelIdx: number}, TContext> => {
+
+const mutationKey = ['regeneratePanel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof regeneratePanel>>, {id: number;panelIdx: number}> = (props) => {
+          const {id,panelIdx} = props ?? {};
+
+          return  regeneratePanel(id,panelIdx,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RegeneratePanelMutationResult = NonNullable<Awaited<ReturnType<typeof regeneratePanel>>>
+
+    export type RegeneratePanelMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Regenerate a single panel by its index, leaving all other panels untouched.
+ */
+export const useRegeneratePanel = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof regeneratePanel>>, TError,{id: number;panelIdx: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof regeneratePanel>>,
+        TError,
+        {id: number;panelIdx: number},
+        TContext
+      > => {
+      return useMutation(getRegeneratePanelMutationOptions(options));
+    }
+
 export const getListScreenplaysUrl = () => {
 
 

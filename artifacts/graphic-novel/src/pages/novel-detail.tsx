@@ -1,5 +1,5 @@
 import { useLocation, useParams } from "wouter";
-import { useGetNovel, getGetNovelQueryKey, useRegenerateNovel, useRepairNovel, useAbortNovel } from "@workspace/api-client-react";
+import { useGetNovel, getGetNovelQueryKey, useRegenerateNovel, useRepairNovel, useAbortNovel, useRegeneratePanel } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Printer, Loader2, AlertCircle, Video, RotateCcw, Wrench, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,25 @@ export default function NovelDetail() {
   const regenerate = useRegenerateNovel();
   const repair = useRepairNovel();
   const abort = useAbortNovel();
+  const regeneratePanel = useRegeneratePanel();
+  const [regeneratingIdx, setRegeneratingIdx] = useState<number | null>(null);
+
+  const handleRegeneratePanel = (panelIdx: number) => {
+    if (!id) return;
+    setRegeneratingIdx(panelIdx);
+    regeneratePanel.mutate(
+      { id: Number(id), panelIdx },
+      {
+        onSettled: () => {
+          setRegeneratingIdx(null);
+          queryClient.invalidateQueries({ queryKey: getGetNovelQueryKey(Number(id)) });
+        },
+        onError: (err) => {
+          alert("Could not regenerate panel: " + (err instanceof Error ? err.message : String(err)));
+        },
+      },
+    );
+  };
   const [repairInstructions, setRepairInstructions] = useState("");
   const [repairNotice, setRepairNotice] = useState("");
 
@@ -464,6 +483,25 @@ export default function NovelDetail() {
                 </div>
               )}
             </div>
+            {!isGenerating && (panel.status === 'done' || panel.status === 'failed') && (
+              <div className="print:hidden flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleRegeneratePanel(panel.idx)}
+                  disabled={regeneratingIdx !== null}
+                  className="font-mono text-xs uppercase tracking-widest"
+                  data-testid={`button-regenerate-panel-${panel.idx}`}
+                >
+                  {regeneratingIdx === panel.idx ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Regenerating panel {idx + 1}...</>
+                  ) : (
+                    <><RotateCcw className="w-4 h-4 mr-2" />Regenerate this panel</>
+                  )}
+                </Button>
+              </div>
+            )}
           </motion.div>
         ))}
       </div>

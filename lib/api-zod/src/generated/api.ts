@@ -215,6 +215,38 @@ export const RepairNovelResponse = zod.object({
 
 
 /**
+ * @summary Regenerate a single panel by its index, leaving all other panels untouched.
+ */
+export const RegeneratePanelParams = zod.object({
+  "id": zod.coerce.number(),
+  "panelIdx": zod.coerce.number()
+})
+
+export const RegeneratePanelResponse = zod.object({
+  "id": zod.number(),
+  "title": zod.string(),
+  "sourceText": zod.string(),
+  "specifications": zod.string(),
+  "panelCount": zod.number(),
+  "textModel": zod.string(),
+  "artStyle": zod.string().nullish(),
+  "explicit": zod.boolean().optional(),
+  "status": zod.string(),
+  "error": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "panels": zod.array(zod.object({
+  "id": zod.number(),
+  "idx": zod.number(),
+  "caption": zod.string().nullish(),
+  "imagePrompt": zod.string().nullish(),
+  "imageDataUrl": zod.string().nullish(),
+  "status": zod.string().describe('pending | generating | done | failed'),
+  "error": zod.string().nullish()
+}))
+})
+
+
+/**
  * @summary List recent screenplays
  */
 export const ListScreenplaysResponseItem = zod.object({
