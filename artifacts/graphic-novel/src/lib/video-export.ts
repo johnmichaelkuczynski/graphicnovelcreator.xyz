@@ -158,23 +158,6 @@ function drawOverlays(
     });
   }
 
-  ctx.font = `700 ${Math.round(W * 0.028)}px "Courier New", monospace`;
-  ctx.textBaseline = "alphabetic";
-  const counter = `${panelIdx + 1} / ${totalPanels}`;
-  const counterW = ctx.measureText(counter).width;
-  const counterPadX = pad * 0.4;
-  const counterPadY = pad * 0.3;
-  const counterH = Math.round(W * 0.04);
-  const counterX = pad;
-  const counterY = H - pad - counterH;
-  ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
-  ctx.fillRect(counterX, counterY, counterW + counterPadX * 2, counterH);
-  ctx.strokeStyle = "#1a1a1a";
-  ctx.lineWidth = Math.max(3, W * 0.004);
-  ctx.strokeRect(counterX, counterY, counterW + counterPadX * 2, counterH);
-  ctx.fillStyle = "#1a1a1a";
-  ctx.fillText(counter, counterX + counterPadX, counterY + counterH - counterPadY);
-
   ctx.globalAlpha = 1;
 }
 
