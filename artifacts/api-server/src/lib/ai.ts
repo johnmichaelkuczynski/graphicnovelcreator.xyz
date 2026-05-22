@@ -1,56 +1,15 @@
-import OpenAI from "openai";
-import Anthropic from "@anthropic-ai/sdk";
 import { logger } from "./logger";
 
 export type ZhiId = "zhi1" | "zhi2" | "zhi3" | "zhi4";
 
+// All text generation is routed through Venice. The other ZhiIds remain in
+// the type for back-compat with existing DB rows but are no longer offered
+// as selectable models.
 export const MODELS: Array<{ id: ZhiId; label: string; provider: string; supportsExplicit: boolean }> = [
-  { id: "zhi2", label: "Zhi 2", provider: "Anthropic Claude", supportsExplicit: false },
-  { id: "zhi3", label: "Zhi 3", provider: "OpenAI ChatGPT", supportsExplicit: false },
   { id: "zhi4", label: "Zhi 4", provider: "Venice", supportsExplicit: true },
 ];
 
 const VENICE_BASE = "https://api.venice.ai/api/v1";
-
-const openaiClient = process.env.AI_INTEGRATIONS_OPENAI_API_KEY
-  ? new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-    })
-  : null;
-
-const anthropicClient = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY
-  ? new Anthropic({
-      apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-    })
-  : null;
-
-async function callAnthropic(system: string, user: string): Promise<string> {
-  if (!anthropicClient) throw new Error("Anthropic not configured");
-  const msg = await anthropicClient.messages.create({
-    model: "claude-sonnet-4-5",
-    max_tokens: 8000,
-    system,
-    messages: [{ role: "user", content: user }],
-  });
-  return msg.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("\n");
-}
-
-async function callOpenAI(system: string, user: string): Promise<string> {
-  if (!openaiClient) throw new Error("OpenAI not configured");
-  const resp = await openaiClient.chat.completions.create({
-    model: "gpt-5",
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-  });
-  return resp.choices[0]?.message.content ?? "";
-}
 
 async function callVeniceText(system: string, user: string): Promise<string> {
   if (!process.env.VENICE_API_KEY) throw new Error("VENICE_API_KEY not set");
@@ -159,46 +118,9 @@ If multiple references are given, describe each one in turn.`;
     }
   }
 
-  // Fallbacks: Anthropic, then OpenAI.
-  if (anthropicClient) {
-    const content: Anthropic.ContentBlockParam[] = [];
-    images.forEach((img, i) => {
-      const { mediaType, base64 } = parseDataUrl(img.dataUrl);
-      content.push({
-        type: "image",
-        source: { type: "base64", media_type: mediaType as "image/png", data: base64 },
-      });
-      content.push({ type: "text", text: `Above is reference "${img.label || `ref_${i + 1}`}".` });
-    });
-    content.push({ type: "text", text: instruction });
-
-    const msg = await anthropicClient.messages.create({
-      model: "claude-sonnet-4-5",
-      max_tokens: 2000,
-      messages: [{ role: "user", content }],
-    });
-    return msg.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
-  }
-
-  if (openaiClient) {
-    const content: OpenAI.Chat.ChatCompletionContentPart[] = [];
-    images.forEach((img, i) => {
-      content.push({ type: "image_url", image_url: { url: img.dataUrl } });
-      content.push({ type: "text", text: `Above is reference "${img.label || `ref_${i + 1}`}".` });
-    });
-    content.push({ type: "text", text: instruction });
-
-    const resp = await openaiClient.chat.completions.create({
-      model: "gpt-5",
-      messages: [{ role: "user", content }],
-    });
-    return resp.choices[0]?.message.content ?? "";
-  }
-
-  // Last resort: just list labels.
+  // Venice is the only configured vision provider; if it returned nothing
+  // usable, fall back to a label-only stub so the rest of the pipeline still
+  // has something to anchor against.
   return `Reference subjects to depict consistently in every relevant panel: ${images.map((i) => i.label).join(", ")}.`;
 }
 

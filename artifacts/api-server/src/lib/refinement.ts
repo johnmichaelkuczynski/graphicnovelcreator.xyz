@@ -1,29 +1,7 @@
-import Anthropic from "@anthropic-ai/sdk";
-import OpenAI from "openai";
 import { generateImage } from "./ai";
 import { logger } from "./logger";
 
 const VENICE_BASE = "https://api.venice.ai/api/v1";
-
-const anthropicClient = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY
-  ? new Anthropic({
-      apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-    })
-  : null;
-
-const openaiClient = process.env.AI_INTEGRATIONS_OPENAI_API_KEY
-  ? new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-    })
-  : null;
-
-function parseDataUrl(dataUrl: string): { mediaType: string; base64: string } {
-  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-  if (!match) throw new Error("Reference image is not a base64 data URL");
-  return { mediaType: match[1], base64: match[2] };
-}
 
 interface HistoryItem {
   instructions: string;
@@ -111,71 +89,22 @@ Do not add any other commentary.`;
 
   let description = "";
 
-  // Explicit content goes straight to Venice (uncensored vision) — Claude/OpenAI will refuse.
-  const tryVenice = async (): Promise<string> => callVeniceVision(opts.dataUrl, promptText);
-  const tryClaude = async (): Promise<string> => {
-    if (!anthropicClient) throw new Error("Anthropic not configured");
-    const { mediaType, base64 } = parseDataUrl(opts.dataUrl);
-    const msg = await anthropicClient.messages.create({
-      model: "claude-sonnet-4-5",
-      max_tokens: 1500,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: mediaType as "image/png", data: base64 } },
-            { type: "text", text: promptText },
-          ],
-        },
-      ],
-    });
-    return msg.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("\n")
-      .trim();
-  };
-  const tryOpenAI = async (): Promise<string> => {
-    if (!openaiClient) throw new Error("OpenAI not configured");
-    const resp = await openaiClient.chat.completions.create({
-      model: "gpt-5",
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "image_url", image_url: { url: opts.dataUrl } },
-            { type: "text", text: promptText },
-          ],
-        },
-      ],
-    });
-    return (resp.choices[0]?.message.content ?? "").trim();
-  };
-
-  // Venice (uncensored) is always tried first. Claude/OpenAI are fallbacks only.
-  const ladder: Array<{ name: string; fn: () => Promise<string> }> = [
-    { name: "venice", fn: tryVenice },
-    ...(anthropicClient ? [{ name: "claude", fn: tryClaude }] : []),
-    ...(openaiClient ? [{ name: "openai", fn: tryOpenAI }] : []),
-  ];
-
-  for (const step of ladder) {
-    try {
-      const candidate = await step.fn();
-      if (candidate && !looksLikeRefusal(candidate)) {
-        description = candidate;
-        logger.info({ provider: step.name, chars: candidate.length }, "Refinement description accepted");
-        break;
-      }
-      logger.warn({ provider: step.name, chars: candidate?.length ?? 0 }, "Refinement description rejected (refusal/too-short); trying next provider");
-    } catch (err) {
-      logger.warn({ provider: step.name, err: err instanceof Error ? err.message : err }, "Refinement provider threw; trying next");
+  // Venice (uncensored) is the only configured vision provider.
+  try {
+    const candidate = await callVeniceVision(opts.dataUrl, promptText);
+    if (candidate && !looksLikeRefusal(candidate)) {
+      description = candidate;
+      logger.info({ provider: "venice", chars: candidate.length }, "Refinement description accepted");
+    } else {
+      logger.warn({ provider: "venice", chars: candidate?.length ?? 0 }, "Refinement description rejected (refusal/too-short)");
     }
+  } catch (err) {
+    logger.warn({ provider: "venice", err: err instanceof Error ? err.message : err }, "Venice vision threw");
   }
 
   if (!description) {
     throw new Error(
-      "All vision providers either refused or returned an unusable description. If this is an adult/explicit reference, enable the Explicit toggle on the refine page.",
+      "Venice vision either refused or returned an unusable description. Try rephrasing the instructions or enabling Explicit on the refine page.",
     );
   }
 
