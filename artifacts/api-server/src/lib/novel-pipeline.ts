@@ -533,7 +533,18 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
     // checked against all prior ones for near-duplicates. See computeDHash.
     const priorHashes: bigint[] = [];
 
+    // Venice rate-limits / starts erroring after ~10-20 consecutive image calls.
+    // Pause for 10s every 10 panels to let upstream cool down.
+    const BATCH_SIZE = 10;
+    const BATCH_PAUSE_MS = 10_000;
+    let panelsSinceBreak = 0;
+
     for (const row of inserted.sort((a, b) => a.idx - b.idx)) {
+      if (panelsSinceBreak >= BATCH_SIZE) {
+        logger.info({ novelId, atPanel: row.idx }, `Pausing ${BATCH_PAUSE_MS}ms between panel batches`);
+        await new Promise((r) => setTimeout(r, BATCH_PAUSE_MS));
+        panelsSinceBreak = 0;
+      }
       // Check for user abort between panels — status flips to "aborted" via the abort endpoint.
       const [cur] = await db
         .select({ status: novelsTable.status })
@@ -585,6 +596,7 @@ export async function runNovelGeneration(novelId: number): Promise<void> {
           .set({ status: "failed", error: msg })
           .where(eq(panelsTable.id, row.id));
       }
+      panelsSinceBreak++;
     }
 
     const finalPanels = await db

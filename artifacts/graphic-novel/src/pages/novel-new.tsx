@@ -33,7 +33,7 @@ const formSchema = z.object({
   sourceText: z.string().min(1, "Source text is required"),
   specifications: z.string(),
   artStyle: z.string(),
-  panelCount: z.number().min(1).max(200),
+  panelCount: z.number().min(1).max(50),
   textModel: z.string().min(1, "Model is required"),
   explicit: z.boolean().default(false),
 });
@@ -58,10 +58,10 @@ export default function NovelNew() {
       setAudioTrack(track);
       setPendingAudio(track);
       // HARD RULE: if an MP3 is uploaded, the panel count MUST match its length.
-      // 3 seconds per panel, only clamped at the absolute schema max (200) so the audio
+      // 3 seconds per panel, only clamped at the absolute schema max (50) so the audio
       // duration — not a default — always determines panel count.
       const SEC_PER_PANEL = 3;
-      const suggested = Math.max(1, Math.min(200, Math.round(durationSec / SEC_PER_PANEL)));
+      const suggested = Math.max(1, Math.min(50, Math.round(durationSec / SEC_PER_PANEL)));
       form.setValue("panelCount", suggested, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
       setLengthUnit("seconds");
     } catch (err) {
@@ -301,7 +301,7 @@ export default function NovelNew() {
                         <FormControl>
                           <Slider
                             min={1}
-                            max={200}
+                            max={50}
                             step={1}
                             value={[field.value]}
                             onValueChange={(vals) => field.onChange(vals[0])}
@@ -318,7 +318,7 @@ export default function NovelNew() {
                         <FormControl>
                           <Slider
                             min={SEC_PER_PANEL}
-                            max={200 * SEC_PER_PANEL}
+                            max={50 * SEC_PER_PANEL}
                             step={SEC_PER_PANEL}
                             value={[seconds]}
                             onValueChange={(vals) => field.onChange(Math.max(1, Math.round((vals[0] ?? SEC_PER_PANEL) / SEC_PER_PANEL)))}
@@ -326,7 +326,7 @@ export default function NovelNew() {
                           />
                         </FormControl>
                         <FormDescription className="font-mono text-xs">
-                          MP4 export plays each panel for {SEC_PER_PANEL}s. Range: {SEC_PER_PANEL}s – {200 * SEC_PER_PANEL / 60}m.
+                          MP4 export plays each panel for {SEC_PER_PANEL}s. Range: {SEC_PER_PANEL}s – {50 * SEC_PER_PANEL / 60}m.
                         </FormDescription>
                       </>
                     )}

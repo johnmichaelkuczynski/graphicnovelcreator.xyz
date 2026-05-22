@@ -71,7 +71,7 @@ export const ListNovelsResponse = zod.array(ListNovelsResponseItem)
  * @summary Start generating a graphic novel
  */
 
-export const createNovelBodyPanelCountMax = 200;
+export const createNovelBodyPanelCountMax = 50;
 
 
 

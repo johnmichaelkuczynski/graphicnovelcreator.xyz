@@ -481,7 +481,7 @@ components:
         panelCount:
           type: integer
           minimum: 1
-          maximum: 200
+          maximum: 50
         specifications:
           type: string
           description: User's free-form direction (style, characters, tone)
