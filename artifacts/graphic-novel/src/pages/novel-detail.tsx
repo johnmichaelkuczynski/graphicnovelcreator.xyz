@@ -19,8 +19,10 @@ import {
   type AudioTrack,
 } from "@/lib/audio-track";
 import { AudioDropzone } from "@/components/audio-dropzone";
-import { Music, X } from "lucide-react";
+import { Music, X, Copy } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { setNovelPrefill } from "@/lib/novel-prefill";
+import { setPendingAudio } from "@/lib/audio-track";
 
 export default function NovelDetail() {
   const { id } = useParams();
@@ -302,17 +304,28 @@ export default function NovelDetail() {
             </Button>
           )}
           <Button
-            onClick={handleRegenerate}
-            disabled={isGenerating || regenerate.isPending || exportingVideo}
+            onClick={() => {
+              if (!novel) return;
+              setNovelPrefill({
+                title: novel.title ?? "",
+                sourceText: novel.sourceText ?? "",
+                specifications: novel.specifications ?? "",
+                artStyle: novel.artStyle ?? "",
+                panelCount: novel.panelCount,
+                textModel: novel.textModel,
+                explicit: novel.explicit ?? false,
+                referenceImages: (novel.referenceImages ?? []) as never,
+              });
+              if (audioTrack) setPendingAudio(audioTrack);
+              setLocation("/novel/new");
+            }}
+            disabled={isGenerating || exportingVideo}
             variant="outline"
             className="font-bold uppercase tracking-widest"
-            title="Wipe existing panels and re-run generation with the same inputs"
+            title="Open the new-novel form prefilled with this novel's settings — change instructions, music, art style, etc., and save it as a brand-new novel (original stays untouched)."
+            data-testid="button-duplicate-edit"
           >
-            {regenerate.isPending ? (
-              <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Restarting...</>
-            ) : (
-              <><RotateCcw className="w-4 h-4 mr-2" /> Regenerate</>
-            )}
+            <Copy className="w-4 h-4 mr-2" /> Duplicate & Edit
           </Button>
           <Button onClick={handlePrint} disabled={isGenerating || exportingVideo} variant="outline" className="font-bold uppercase tracking-widest">
             <Printer className="w-4 h-4 mr-2" /> Export PDF

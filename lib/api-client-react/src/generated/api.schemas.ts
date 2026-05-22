@@ -133,6 +133,7 @@ export interface Novel {
   error?: string | null;
   createdAt: string;
   panels: Panel[];
+  referenceImages?: ReferenceImage[];
 }
 
 export interface ScreenplayInput {

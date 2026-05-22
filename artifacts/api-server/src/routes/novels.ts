@@ -145,6 +145,7 @@ router.get("/novels/:id", async (req, res): Promise<void> => {
         status: p.status,
         error: p.error,
       })),
+      referenceImages: novel.referenceImages ?? [],
     }),
   );
 });

@@ -19,6 +19,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { FileUploader } from "@/components/file-uploader";
 import { ReferenceImagesUploader, ReferenceImage } from "@/components/reference-images-uploader";
 import { popRefinedRefs } from "@/lib/refined-refs";
+import { popNovelPrefill } from "@/lib/novel-prefill";
 import { ArtStylePicker } from "@/components/art-style-picker";
 import { SpecificationsPresets } from "@/components/specifications-presets";
 import { ProjectDrafts } from "@/components/project-drafts";
@@ -44,7 +45,12 @@ export default function NovelNew() {
   const { data: models = [] } = useListModels();
   const createNovel = useCreateNovel();
 
-  const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>(() => popRefinedRefs());
+  // Prefill (from "Duplicate & Edit") consumed once on mount. Falls back to
+   // refined refs from the refinement flow if no prefill is present.
+   const [prefill] = useState(() => popNovelPrefill());
+   const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>(
+     () => prefill?.referenceImages ?? popRefinedRefs(),
+   );
   const [lengthUnit, setLengthUnit] = useState<"panels" | "seconds">("panels");
   const [audioTrack, setAudioTrack] = useState<AudioTrack | null>(null);
   const [audioError, setAudioError] = useState<string>("");
@@ -78,13 +84,13 @@ export default function NovelNew() {
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      title: "",
-      sourceText: "",
-      specifications: "",
-      artStyle: "",
-      panelCount: 12,
-      textModel: "zhi4",
-      explicit: initialExplicit,
+      title: prefill?.title ?? "",
+      sourceText: prefill?.sourceText ?? "",
+      specifications: prefill?.specifications ?? "",
+      artStyle: prefill?.artStyle ?? "",
+      panelCount: prefill?.panelCount ?? 12,
+      textModel: prefill?.textModel ?? "zhi4",
+      explicit: prefill?.explicit ?? initialExplicit,
     },
   });
 

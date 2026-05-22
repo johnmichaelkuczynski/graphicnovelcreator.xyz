@@ -605,6 +605,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Panel"
+        referenceImages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReferenceImage"
 
     ScreenplayInput:
       type: object

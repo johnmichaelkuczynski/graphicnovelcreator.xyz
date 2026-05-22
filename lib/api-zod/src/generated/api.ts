@@ -118,7 +118,12 @@ export const GetNovelResponse = zod.object({
   "imageDataUrl": zod.string().nullish(),
   "status": zod.string().describe('pending | generating | done | failed'),
   "error": zod.string().nullish()
-}))
+})),
+  "referenceImages": zod.array(zod.object({
+  "label": zod.string().describe('e.g. \"the man\" or \"Sarah\"'),
+  "dataUrl": zod.string().describe('data:image\/...;base64 encoded reference image'),
+  "description": zod.string().optional().describe('Optional pre-computed (and user-approved) visual description; when present the pipeline skips its own vision pass.')
+})).optional()
 })
 
 
@@ -157,7 +162,12 @@ export const RegenerateNovelResponse = zod.object({
   "imageDataUrl": zod.string().nullish(),
   "status": zod.string().describe('pending | generating | done | failed'),
   "error": zod.string().nullish()
-}))
+})),
+  "referenceImages": zod.array(zod.object({
+  "label": zod.string().describe('e.g. \"the man\" or \"Sarah\"'),
+  "dataUrl": zod.string().describe('data:image\/...;base64 encoded reference image'),
+  "description": zod.string().optional().describe('Optional pre-computed (and user-approved) visual description; when present the pipeline skips its own vision pass.')
+})).optional()
 })
 
 
@@ -188,7 +198,12 @@ export const ResumeNovelResponse = zod.object({
   "imageDataUrl": zod.string().nullish(),
   "status": zod.string().describe('pending | generating | done | failed'),
   "error": zod.string().nullish()
-}))
+})),
+  "referenceImages": zod.array(zod.object({
+  "label": zod.string().describe('e.g. \"the man\" or \"Sarah\"'),
+  "dataUrl": zod.string().describe('data:image\/...;base64 encoded reference image'),
+  "description": zod.string().optional().describe('Optional pre-computed (and user-approved) visual description; when present the pipeline skips its own vision pass.')
+})).optional()
 })
 
 
@@ -219,7 +234,12 @@ export const AbortNovelResponse = zod.object({
   "imageDataUrl": zod.string().nullish(),
   "status": zod.string().describe('pending | generating | done | failed'),
   "error": zod.string().nullish()
-}))
+})),
+  "referenceImages": zod.array(zod.object({
+  "label": zod.string().describe('e.g. \"the man\" or \"Sarah\"'),
+  "dataUrl": zod.string().describe('data:image\/...;base64 encoded reference image'),
+  "description": zod.string().optional().describe('Optional pre-computed (and user-approved) visual description; when present the pipeline skips its own vision pass.')
+})).optional()
 })
 
 
@@ -273,7 +293,12 @@ export const RegeneratePanelResponse = zod.object({
   "imageDataUrl": zod.string().nullish(),
   "status": zod.string().describe('pending | generating | done | failed'),
   "error": zod.string().nullish()
-}))
+})),
+  "referenceImages": zod.array(zod.object({
+  "label": zod.string().describe('e.g. \"the man\" or \"Sarah\"'),
+  "dataUrl": zod.string().describe('data:image\/...;base64 encoded reference image'),
+  "description": zod.string().optional().describe('Optional pre-computed (and user-approved) visual description; when present the pipeline skips its own vision pass.')
+})).optional()
 })
 
 
