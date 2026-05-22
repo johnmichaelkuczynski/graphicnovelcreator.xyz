@@ -33,19 +33,27 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 app.use("/api", router);
 
-const frontendDist = path.resolve(
-  process.cwd(),
-  "artifacts/graphic-novel/dist/public",
-);
+const candidatePaths = [
+  path.resolve(process.cwd(), "artifacts/graphic-novel/dist/public"),
+  path.resolve(process.cwd(), "../graphic-novel/dist/public"),
+  typeof __dirname !== "undefined"
+    ? path.resolve(__dirname, "../../graphic-novel/dist/public")
+    : null,
+  typeof __dirname !== "undefined"
+    ? path.resolve(__dirname, "../graphic-novel/dist/public")
+    : null,
+].filter((p): p is string => p !== null);
 
-if (fs.existsSync(frontendDist)) {
+const frontendDist = candidatePaths.find((p) => fs.existsSync(p));
+
+if (frontendDist) {
   app.use(express.static(frontendDist));
   app.get(/^\/(?!api\/).*/, (_req, res) => {
     res.sendFile(path.join(frontendDist, "index.html"));
   });
   logger.info({ frontendDist }, "Serving frontend from dist");
 } else {
-  logger.warn({ frontendDist }, "Frontend dist not found; root URL will 404");
+  logger.warn({ candidatePaths }, "Frontend dist not found; root URL will 404");
 }
 
 export default app;
