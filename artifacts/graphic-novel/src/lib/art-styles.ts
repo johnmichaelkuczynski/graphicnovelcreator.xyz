@@ -6,6 +6,11 @@ export interface ArtStyle {
 
 export const ART_STYLES: ArtStyle[] = [
   {
+    id: "minimal-schematic",
+    label: "Minimal Schematic (Token-Lite)",
+    prompt: "Ultra-minimal black-and-white line drawing on pure white background. Single-weight thin black ink stroke, no shading, no crosshatching, no gradients, no fill, no color, no texture. Sparse schematic composition — only the essential 2 or 3 shapes needed to read the scene, lots of empty white negative space. Flat orthographic geometry with a faint diagrammatic feel (think technical illustration crossed with a Keith Haring outline). Strictly two tones: white paper and pure black ink. No grayscale.",
+  },
+  {
     id: "noir-ink",
     label: "Noir Ink",
     prompt: "High-contrast black-and-white ink, heavy shadows, hard chiaroscuro, Frank Miller / Sin City influence, rough brushwork, cinematic.",
